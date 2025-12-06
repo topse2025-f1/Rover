@@ -1,0 +1,122 @@
+class RoverTypes
+
+-- ローバーシステム全体で使用される共通の型、定数、関数を定義する基底クラス
+-- 全てのコンポーネントはこのクラスを継承して使用する
+
+types
+    -- 位置情報（Visionクラスの定義を再利用）
+    public Position = Vision`Position;
+    
+    -- ゴールを一意に識別するID
+    public GoalID = token;
+    
+    -- 充電器を一意に識別するID
+    public ChargerID = token;
+    
+    -- ゴールの優先度（自然数）
+    public Priority = nat;
+    
+    -- マップの検証状態（有効/無効）
+    public MapStatus = <Valid> | <Invalid>;
+    
+    -- プラン生成の状態（準備完了/プランなし/失敗）
+    public PlanStatus = <Ready> | <NoPlan> | <Failure>;
+    
+    -- プランナーの種類（目的地用/充電用）
+    public PlannerKind = <Destination> | <Charging>;
+    
+    -- 通信メッセージの種類
+    public MessageType = <invalidMap> | <completed> | <noMoreViablePlans> | <failureModeInvoked> | <communicationData>;
+    
+    -- 故障の種類
+    public Fault = <None> | <PlannerTimeout> | <LocalizationFault> | <CommFailure>;
+    
+    -- 移動コマンドの種類
+    public MovementCommand = <Forward> | <Backward> | <Left> | <Right> | <Stop>;
+    
+    -- 故障回復アクションの種類
+    public RecoveryAction = <Reboot> | <RequestGroundHelp> | <RequestRoverHelp> | <Await>;
+    
+    -- 通信接続状態
+    public ConnectionState = <Disconnected> | <Connected>;
+
+    -- ゴール情報の定義
+    public Goal ::
+        id : GoalID
+        pos : Position
+        priority : Priority;
+
+    -- 充電器情報の定義
+    public Charger ::
+        id : ChargerID
+        pos : Position;
+
+    -- 移動プランの定義（位置の列）
+    public Plan ::
+        steps : seq of Position;
+
+    -- マップ検証レポートの定義
+    public MapReport ::
+        status : MapStatus
+        detail : seq of char;
+
+    -- システム状態のスナップショット（故障診断用）
+    public SystemState ::
+        battery : nat
+        rechargeFlag : bool
+        lastGoal : [Goal];
+
+values
+    -- 障害物との安全距離（メートル）
+    public safeDistance : real = 1.0;
+    
+    -- デフォルトの最大バッテリー容量
+    public defaultMaxBattery : nat1 = 100;
+    
+    -- 目標とする信頼性指標
+    public reliabilityTarget : real = 0.99;
+
+functions
+    -- ブール値を文字列に変換する補助関数
+    public static boolToText : bool -> seq of char
+    boolToText(flag) ==
+        if flag
+        then "true"
+        else "false";
+
+    -- 2点間の距離を計算する（Visionクラスの関数をラップ）
+    public static distance : Position * Position -> real
+    distance(p1, p2) ==
+        Vision`dist(p1, p2);
+
+    -- 2点が同じ場所にあるか判定する（許容誤差 1E-6）
+    public static sameLocation : Position * Position -> bool
+    sameLocation(p1, p2) ==
+        Vision`dist(p1, p2) < 1E-6;
+
+    -- プランのステップ数を返す
+    public static planLength : Plan -> nat
+    planLength(p) ==
+        if p.steps = [] then 0 else len p.steps;
+
+    -- オプショナルなプランのステップ数を安全に返す（nilなら0）
+    public static optionalPlanLength : [Plan] -> nat
+    optionalPlanLength(plan) ==
+        if plan = nil
+        then 0
+        else planLength(plan);
+
+    -- 指定位置から最も近い充電器を探索して返す
+    -- 引数 pos: 現在位置
+    -- 引数 chargers: 充電器の集合
+    -- 戻り値: 最寄りの充電器（集合が空ならnil）
+    public static nearestCharger : Position * set of Charger -> [Charger]
+    nearestCharger(pos, chargers) ==
+        if chargers = {}
+        then nil
+        else let best in set chargers be st
+                forall other in set chargers &
+                    Vision`dist(pos, best.pos) <= Vision`dist(pos, other.pos)
+             in best;
+
+end RoverTypes

@@ -1,0 +1,324 @@
+class RoverController is subclass of RoverTypes
+
+-- ローバー全体の制御を行うメインコントローラクラス
+-- 各コンポーネント（GRA, Battery, Communication, FailureMode）間の連携を調整する
+
+instance variables
+    -- ゴール推論エージェントへの参照
+    private gra : [GoalReasoningAgent] := nil;
+    
+    -- バッテリーハードウェアへの参照
+    private battery : [BatteryHardware] := nil;
+    
+    -- 地上局通信モジュールへの参照
+    private commGround : [Communication2Ground] := nil;
+    
+    -- ローバー間通信モジュールへの参照
+    private commRovers : [Communication2Rovers] := nil;
+    
+    -- 故障モード管理モジュールへの参照
+    private failureMode : [FailureMode] := nil;
+    
+    -- 優先的に支援を要請するヘルパーローバーのID
+    private preferredHelper : [token] := nil;
+    
+    -- 地上局への支援要請中フラグ
+    private awaitingGroundHelp : bool := false;
+    
+    -- 他ローバーへの支援要請中フラグ
+    private awaitingRoverHelp : bool := false;
+    
+    -- 最後に実行した回復アクション
+    private lastAction : RecoveryAction := <Await>;
+
+inv
+    -- 不変条件: 故障モードがない場合はGRAも設定されていない（初期化整合性）
+    (failureMode = nil => gra = nil) and
+    -- 不変条件: 地上局と他ローバーへの支援要請は同時に行わない
+    not (awaitingGroundHelp and awaitingRoverHelp);
+
+operations
+    -- コントローラの構成要素を設定する（依存性の注入）
+    -- 引数 agent: ゴール推論エージェント
+    -- 引数 batteryHw: バッテリーハードウェア
+    -- 引数 ground: 地上局通信
+    -- 引数 rovers: ローバー間通信
+    -- 引数 failMode: 故障モード管理
+    -- 事後条件: 各インスタンス変数が正しく設定されること
+    public configure: GoalReasoningAgent * BatteryHardware * Communication2Ground * Communication2Rovers * FailureMode ==> ()
+    configure(agent, batteryHw, ground, rovers, failMode) ==
+    (
+        gra := agent;
+        battery := batteryHw;
+        commGround := ground;
+        commRovers := rovers;
+        failureMode := failMode;
+        if gra <> nil
+        then gra.setController(self)
+        else skip;
+        if battery <> nil
+        then battery.setController(self)
+        else skip;
+        if commGround <> nil
+        then commGround.setController(self)
+        else skip;
+        if commRovers <> nil
+        then commRovers.setController(self)
+        else skip;
+        if failureMode <> nil and gra <> nil
+        then failureMode.bindGoalAgent(gra)
+        else skip
+    )
+    post 
+        gra = agent and
+        battery = batteryHw and
+        commGround = ground and
+        commRovers = rovers and
+        failureMode = failMode;
+
+    -- 優先ヘルパーローバーを設定する
+    -- 引数 helperId: ヘルパーのID
+    -- 事後条件: 優先ヘルパーが設定されること
+    public setPreferredHelper: token ==> ()
+    setPreferredHelper(helperId) ==
+    (
+        preferredHelper := helperId;
+        if commRovers <> nil
+        then commRovers.registerHelper(helperId)
+        else skip
+    )
+    post preferredHelper = helperId;
+
+    -- 安全な退避場所を設定する
+    -- 引数 goal: 安全地点としてのゴール
+    public setSafeLocation: Goal ==> ()
+    setSafeLocation(goal) ==
+        if failureMode = nil
+        then skip
+        else failureMode.setSafeLocationGoal(goal);
+
+    -- プランナーからの失敗報告を受け取り、回復処理を開始する
+    -- 引数 fault: 発生した故障の種類
+    -- 引数 state: 故障時のシステム状態
+    public reportPlannerFailure: Fault * SystemState ==> ()
+    reportPlannerFailure(fault, state) ==
+    (
+        if failureMode = nil
+        then skip
+        else (
+            failureMode.activateFromGoalAgent(fault, state);
+            processRecovery()
+        )
+    );
+
+    -- バッテリー切れの報告を受け取り、回復処理を開始する
+    public reportBatteryCritical: () ==> ()
+    reportBatteryCritical() ==
+    (
+        if failureMode = nil
+        then skip
+        else (
+            dcl state : SystemState := buildSystemState();
+            failureMode.activateFromBattery(state);
+            processRecovery()
+        )
+    );
+
+    -- 地上局通信の失敗報告を受け取り、回復処理を開始する
+    -- 引数 message: 送信に失敗したメッセージの種類
+    public reportGroundCommFailure: MessageType ==> ()
+    reportGroundCommFailure(message) ==
+    (
+        if failureMode = nil
+        then skip
+        else (
+            failureMode.activateFromCommunication(message);
+            processRecovery()
+        )
+    );
+
+    -- 地上局からの応答があったことを通知し、支援待ち状態を解除する
+    public notifyGroundResponse: () ==> ()
+    notifyGroundResponse() ==
+    (
+        if failureMode = nil
+        then skip
+        else (
+            dcl resolved : bool := failureMode.pollHelpResponse(true);
+            awaitingGroundHelp := false;
+            if resolved
+            then finalizeRecovery()
+            else skip
+        )
+    );
+
+    -- 他ローバーの到着報告を受け取り、支援待ち状態を解除する
+    -- 引数 helperId: 到着したローバーのID
+    public reportRoverArrival: token ==> ()
+    reportRoverArrival(helperId) ==
+    (
+        if failureMode = nil
+        then skip
+        else (
+            if awaitingRoverHelp and preferredHelper <> nil and helperId = preferredHelper
+            then (
+                dcl resolved : bool := failureMode.pollHelpResponse(true);
+                awaitingRoverHelp := false;
+                if resolved
+                then finalizeRecovery()
+                else skip
+            )
+            else skip
+        )
+    );
+
+    -- 支援待ち時間の経過を処理する（タイムアウト監視）
+    public tickHelpWait: () ==> ()
+    tickHelpWait() ==
+    (
+        if failureMode = nil
+        then skip
+        elseif failureMode.isHelpRequested()
+        then (
+            if failureMode.pollHelpResponse(false)
+            then finalizeRecovery()
+            else skip;
+            if failureMode.helpWaitExceeded()
+            then escalateHelp()
+            else skip
+        )
+        else skip
+    );
+
+    -- 外部要因で支援要請が完了した場合の処理
+    public helpRequestCompletedExternally: () ==> ()
+    helpRequestCompletedExternally() ==
+    (
+        if failureMode = nil
+        then skip
+        else finalizeRecovery()
+    );
+
+    -- 回復アクションを実行する内部操作
+    private processRecovery: () ==> ()
+    processRecovery() ==
+    (
+        if failureMode = nil
+        then skip
+        else (
+            dcl action : RecoveryAction := failureMode.performNextAction();
+            lastAction := action;
+            cases action:
+                <RequestGroundHelp> -> (
+                    awaitingGroundHelp := true;
+                    awaitingRoverHelp := false;
+                    attemptGroundHelp()
+                ),
+                <RequestRoverHelp> -> (
+                    awaitingRoverHelp := true;
+                    awaitingGroundHelp := false;
+                    attemptRoverHelp()
+                ),
+                <Reboot> -> (
+                    awaitingGroundHelp := false;
+                    awaitingRoverHelp := false;
+                    finalizeRecovery()
+                ),
+                others -> skip
+            end
+        )
+    );
+
+    -- 地上局への支援要請を試行する内部操作
+    private attemptGroundHelp: () ==> ()
+    attemptGroundHelp() ==
+    (
+        if commGround = nil
+        then skip
+        else (
+            if commGround.needsReconnect()
+            then commGround.establishConnection(mk_token("CCSDS"), true)
+            else skip;
+            if commGround.needsReconnect()
+            then skip
+            else commGround.sendAssistanceRequest(10)
+        )
+    );
+
+    -- 他ローバーへの支援要請を試行する内部操作
+    private attemptRoverHelp: () ==> ()
+    attemptRoverHelp() ==
+    (
+        if commRovers = nil
+        then skip
+        elseif preferredHelper = nil
+        then skip
+        else (
+            dcl posOpt : [Vision`Position] := if gra = nil then nil else gra.getLastKnownPosition();
+            if posOpt = nil
+            then skip
+            else (
+                dcl pos : Vision`Position := posOpt;
+                dcl fault : Fault :=
+                    if failureMode = nil
+                    then <CommFailure>
+                    else failureMode.getCurrentFault();
+                commRovers.registerHelper(preferredHelper);
+                commRovers.broadcastStatus(preferredHelper, pos, fault, "support requested", mk_token("CAM"));
+                awaitingRoverHelp := true
+            )
+        )
+    );
+
+    -- 支援要請をエスカレーションする（例：ローバー支援失敗→地上局支援へ）
+    private escalateHelp: () ==> ()
+    escalateHelp() ==
+    (
+        if failureMode = nil
+        then skip
+        elseif failureMode.getCurrentFault() = <None>
+        then finalizeRecovery()
+        else (
+            awaitingGroundHelp := false;
+            awaitingRoverHelp := false;
+            failureMode.activateFromGoalAgent(failureMode.getCurrentFault(), buildSystemState());
+            processRecovery()
+        )
+    );
+
+    -- 回復処理を完了し、通常状態に戻る
+    private finalizeRecovery: () ==> ()
+    finalizeRecovery() ==
+    (
+        awaitingGroundHelp := false;
+        awaitingRoverHelp := false;
+        lastAction := <Await>;
+        if failureMode <> nil
+        then failureMode.clearFailure()
+        else skip
+    );
+
+    -- 現在のシステム状態を収集してオブジェクトを生成する
+    private buildSystemState: () ==> SystemState
+    buildSystemState() ==
+    (
+        dcl level : nat :=
+            if battery = nil
+            then 0
+            else battery.getReportedBattery();
+        dcl recharge : bool :=
+            if battery = nil
+            then false
+            else battery.getRechargeFlag();
+        dcl goalOpt : [Goal] :=
+            if gra = nil
+            then nil
+            else gra.getCurrentGoal();
+        return mk_SystemState(level, recharge, goalOpt)
+    );
+
+    -- 最後に実行されたアクションを取得する（テスト用）
+    public getLastAction: () ==> RecoveryAction
+    getLastAction() == return lastAction;
+
+end RoverController
