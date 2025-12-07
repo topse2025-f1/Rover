@@ -1,0 +1,66 @@
+class BatteryHardwareTestSuite is subclass of RoverTypes
+
+operations
+    -- テスト実行
+    public RunAll: () ==> seq of char
+    RunAll() ==
+    (
+        dcl results : seq of char := "";
+        
+        -- テストケース1: 初期化と基本動作
+        results := results ^ TestInitialization();
+        
+        -- テストケース2: 移動による消費
+        results := results ^ TestConsumption();
+        
+        -- テストケース3: 充電動作
+        results := results ^ TestCharging();
+        
+        return results
+    );
+
+    -- 初期化テスト
+    private TestInitialization: () ==> seq of char
+    TestInitialization() ==
+    (
+        dcl battery : BatteryHardware := new BatteryHardware();
+        battery.setBatteryCapacity(100);
+        
+        if battery.getBatteryLevel() = 100 and not battery.getRechargeFlag()
+        then return "TestInitialization: OK\n"
+        else return "TestInitialization: FAILED\n"
+    );
+
+    -- 消費テスト
+    private TestConsumption: () ==> seq of char
+    TestConsumption() ==
+    (
+        dcl battery : BatteryHardware := new BatteryHardware();
+        dcl cmd : MovementCommand := <Forward>;
+        
+        battery.setBatteryCapacity(100);
+        battery.sendMovementCommand(cmd);
+        battery.executeNextCommand();
+        
+        if battery.getBatteryLevel() < 100
+        then return "TestConsumption: OK\n"
+        else return "TestConsumption: FAILED (Level not decreased)\n"
+    );
+
+    -- 充電テスト
+    private TestCharging: () ==> seq of char
+    TestCharging() ==
+    (
+        dcl battery : BatteryHardware := new BatteryHardware();
+        battery.setBatteryCapacity(100);
+        battery.updateBatteryLevel(50); -- 減らす
+        
+        battery.reachCharger();
+        battery.chargeTick(10);
+        
+        if battery.getBatteryLevel() > 50 and battery.isCharging()
+        then return "TestCharging: OK\n"
+        else return "TestCharging: FAILED\n"
+    );
+
+end BatteryHardwareTestSuite
