@@ -1,0 +1,56 @@
+class CommunicationTestSuite is subclass of RoverTypes
+
+operations
+    public RunAll: () ==> seq of char
+    RunAll() ==
+    (
+        dcl results : seq of char := "";
+        results := results ^ TestGroundComm();
+        results := results ^ TestRoverComm();
+        return results
+    );
+
+    private TestGroundComm: () ==> seq of char
+    TestGroundComm() ==
+    (
+        dcl comm : Communication2Ground := new Communication2Ground();
+        dcl protocol : token := mk_token("CCSDS");
+        
+        -- 接続テスト
+        comm.establishConnection(protocol, true);
+        
+        if comm.needsReconnect()
+        then return "TestGroundComm: FAILED (Should be connected)\n"
+        else (
+            -- メッセージ送信テスト
+            dcl msg : Communication2Ground`GroundMessage := 
+                mk_Communication2Ground`GroundMessage(<communicationData>, "test", 5);
+            comm.sendMessage(msg);
+            
+            if comm.isAwaitingResponse()
+            then return "TestGroundComm: OK\n"
+            else return "TestGroundComm: FAILED (Not awaiting response)\n"
+        )
+    );
+
+    private TestRoverComm: () ==> seq of char
+    TestRoverComm() ==
+    (
+        dcl comm : Communication2Rovers := new Communication2Rovers();
+        dcl helperId : token := mk_token("Rover2");
+        dcl pos : Position := mk_Vision`Position(10, 10);
+        dcl fault : Fault := <LocalizationFault>;
+        dcl protocol : token := mk_token("CAM");
+        
+        -- ヘルパー登録
+        comm.registerHelper(helperId);
+        
+        -- ブロードキャストテスト
+        comm.broadcastStatus(helperId, pos, fault, "Help me", protocol);
+        
+        if comm.isAwaitingHelper()
+        then return "TestRoverComm: OK\n"
+        else return "TestRoverComm: FAILED (Not awaiting helper)\n"
+    );
+
+end CommunicationTestSuite

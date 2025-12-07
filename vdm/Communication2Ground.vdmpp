@@ -1,0 +1,223 @@
+class Communication2Ground is subclass of RoverTypes
+
+types
+    -- 地上局へのメッセージ構造体
+    public GroundMessage ::
+        mtype : MessageType
+        payload : seq of char
+        ticks : nat;
+
+values
+    -- サポートされている通信プロトコル
+    private supportedProtocols : set of token = { mk_token("CCSDS"), mk_token("DSN") };
+
+instance variables
+    -- 通信状態（Connected/Disconnected）
+    private state : ConnectionState := <Disconnected>;
+    
+    -- 最後に使用したプロトコル
+    private lastProtocol : [token] := nil;
+    
+    -- 接続試行回数
+    private attemptCount : nat := 0;
+    
+    -- 接続成功回数
+    private successCount : nat := 0;
+    
+    -- 連続失敗回数
+    private consecutiveFailures : nat := 0;
+    
+    -- 応答待ちフラグ
+    private awaitingResponse : bool := false;
+    
+    -- 応答期限（ティック数）
+    private responseDeadline : nat := 0;
+    
+    -- 最後に送信したメッセージタイプ
+    private lastSent : [MessageType] := nil;
+    
+    -- 障害エスカレーションフラグ
+    private failureEscalated : bool := false;
+    
+    -- キャッシュされたゴール情報
+    private cachedGoals : seq of Goal := [];
+    
+    -- キャッシュされた充電器情報
+    private cachedChargers : seq of Charger := [];
+    
+    -- キャッシュされた障害物情報
+    private cachedObstacles : set of Vision`Position := {};
+    
+    -- コントローラへの参照
+    private controller : [RoverController] := nil;
+    
+    -- エスカレーション通知済みフラグ
+    private escalationNotified : bool := false;
+
+inv
+    -- 不変条件: 成功回数は試行回数以下であること
+    successCount <= attemptCount and
+    -- 不変条件: 接続状態ならば試行回数は1以上であること
+    (state = <Connected> => attemptCount > 0) and
+    -- 不変条件: エスカレーション時は連続失敗回数が3以上であること
+    (failureEscalated => consecutiveFailures >= 3)
+
+functions
+    -- プロトコルがサポートされているか確認する
+    private isSupportedProtocol : token -> bool
+    isSupportedProtocol(protocol) == protocol in set supportedProtocols;
+
+    -- メッセージタイプが有効か検証する
+    public validateMessageType : MessageType -> bool
+    validateMessageType(mtype) ==
+        mtype in set { <invalidMap>, <completed>, <noMoreViablePlans>, <failureModeInvoked>, <communicationData> };
+
+operations
+    -- コントローラを設定する
+    public setController: RoverController ==> ()
+    setController(coord) == controller := coord;
+
+    -- 地上局との接続を確立する
+    -- 事前条件: プロトコルがサポートされていること
+    -- 事後条件: 試行回数が増加し、成功時は接続状態に、失敗時は切断状態になる
+    public establishConnection: token * bool ==> ()
+    establishConnection(protocol, success) ==
+    (
+        attemptCount := attemptCount + 1;
+        lastProtocol := protocol;
+        if success
+        then (
+            state := <Connected>;
+            successCount := successCount + 1;
+            consecutiveFailures := 0;
+            failureEscalated := false;
+            escalationNotified := false
+        )
+        else (
+            state := <Disconnected>;
+            consecutiveFailures := consecutiveFailures + 1;
+            if consecutiveFailures >= 3
+            then (
+                failureEscalated := true;
+                if controller <> nil and not escalationNotified
+                then (
+                    controller.reportGroundCommFailure(<communicationData>);
+                    escalationNotified := true
+                )
+                else skip
+            )
+            else skip
+        )
+    )
+    pre isSupportedProtocol(protocol)
+    post 
+        attemptCount = attemptCount~ + 1 and
+        (success => state = <Connected> and successCount = successCount~ + 1) and
+        (not success => state = <Disconnected> and consecutiveFailures = consecutiveFailures~ + 1);
+
+    -- 再接続を試みる
+    public reconnect: bool ==> ()
+    reconnect(success) ==
+    (
+        dcl protocol : token :=
+            if lastProtocol = nil
+            then mk_token("CCSDS")
+            else let p : token = lastProtocol in p;
+        establishConnection(protocol, success)
+    );
+
+    -- メッセージを送信する
+    -- 事前条件: 接続済みで、メッセージタイプが有効で、期限が10以下であること
+    public sendMessage: GroundMessage ==> ()
+    sendMessage(msg) ==
+    (
+        lastSent := msg.mtype;
+        awaitingResponse := true;
+        responseDeadline := msg.ticks;
+        consecutiveFailures := 0
+    )
+    pre state = <Connected> and validateMessageType(msg.mtype) and msg.ticks <= 10
+    post 
+        lastSent = msg.mtype and
+        awaitingResponse and
+        responseDeadline = msg.ticks;
+
+    -- 支援要請を送信する
+    public sendAssistanceRequest: nat1 ==> ()
+    sendAssistanceRequest(deadline) ==
+    (
+        dcl msg : GroundMessage := mk_GroundMessage(<failureModeInvoked>, "request assistance", deadline);
+        sendMessage(msg)
+    )
+    pre state = <Connected> and deadline <= 10;
+
+    -- 地上局からの応答を受信する
+    -- 事前条件: 接続済みで、応答待ち状態で、期限内であること
+    public responseReceived: seq of Goal * seq of Charger * set of Vision`Position * nat ==> ()
+    responseReceived(goals, chargers, obstacles, ticks) ==
+    (
+        cachedGoals := goals;
+        cachedChargers := chargers;
+        cachedObstacles := obstacles;
+        awaitingResponse := false;
+        responseDeadline := 0;
+        consecutiveFailures := 0;
+        state := <Connected>;
+        if controller <> nil
+        then controller.notifyGroundResponse()
+        else skip
+    )
+    pre state = <Connected> and awaitingResponse and ticks <= responseDeadline;
+
+    -- 応答がタイムアウトしたか確認する
+    public responseTimedOut: nat ==> bool
+    responseTimedOut(ticks) ==
+        return awaitingResponse and ticks > responseDeadline;
+
+    -- 接続を切断する
+    public closeConnection: () ==> ()
+    closeConnection() ==
+    (
+        state := <Disconnected>;
+        awaitingResponse := false;
+        responseDeadline := 0
+    );
+
+    -- 再接続が必要か確認する
+    public needsReconnect: () ==> bool
+    needsReconnect() == return state = <Disconnected>;
+
+    -- 接続成功率を計算する
+    public connectionSuccessRate: () ==> real
+    connectionSuccessRate() ==
+        return if attemptCount = 0 then 1 else successCount / attemptCount;
+
+    -- 応答待ちかどうかを確認する
+    public isAwaitingResponse: () ==> bool
+    isAwaitingResponse() == return awaitingResponse;
+
+    -- エスカレーションすべきか確認する
+    public shouldEscalate: () ==> bool
+    shouldEscalate() == return failureEscalated;
+
+    -- エスカレーション状態をリセットする
+    public resetEscalation: () ==> ()
+    resetEscalation() ==
+    (
+        failureEscalated := false;
+        escalationNotified := false
+    );
+
+    -- キャッシュされたゴール情報を取得する
+    public getCachedGoals: () ==> seq of Goal
+    getCachedGoals() == return cachedGoals;
+
+    -- キャッシュされた充電器情報を取得する
+    public getCachedChargers: () ==> seq of Charger
+    getCachedChargers() == return cachedChargers;
+
+    -- キャッシュされた障害物情報を取得する
+    public getCachedObstacles: () ==> set of Vision`Position
+    getCachedObstacles() == return cachedObstacles;
+
+end Communication2Ground
