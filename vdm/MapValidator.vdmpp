@@ -1,0 +1,133 @@
+class MapValidator is subclass of RoverTypes
+
+instance variables
+    -- Visionから取得した現在位置
+    private visionPosition : [Vision`Position] := nil;
+    
+    -- Visionから取得した障害物セット
+    private visionObstacles : set of Vision`Position := {};
+    
+    -- 地上局から受信したゴールリスト
+    private groundGoals : seq of Goal := [];
+    
+    -- 地上局から受信した充電器リスト
+    private groundChargers : seq of Charger := [];
+    
+    -- 地図の検証状態（Valid/Invalid）
+    private status : MapStatus := <Valid>;
+    
+    -- 検証結果の詳細メッセージ
+    private detail : seq of char := "";
+
+inv
+    -- 不変条件: ステータスがValidならば、全てのオブジェクト間で安全距離が確保されていること
+    status = <Valid> =>
+        (
+            visionPosition = nil or
+            forall obs in set visionObstacles & Vision`dist(visionPosition, obs) >= safeDistance
+        ) and
+        (
+            forall g in set elems groundGoals &
+                forall obs in set visionObstacles &
+                    Vision`dist(g.pos, obs) >= safeDistance
+        ) and
+        (
+            forall c in set elems groundChargers &
+                forall obs in set visionObstacles &
+                    Vision`dist(c.pos, obs) >= safeDistance
+        );
+
+operations
+    -- Vision情報を更新する
+    public updateVision: Vision`Position * set of Vision`Position ==> ()
+    updateVision(pos, obs) ==
+    (
+        visionPosition := pos;
+        visionObstacles := obs
+    );
+
+    -- ゴール情報を更新する
+    public updateGoals: seq of Goal ==> ()
+    updateGoals(goals) ==
+        groundGoals := goals;
+
+    -- 充電器情報を更新する
+    public updateChargers: seq of Charger ==> ()
+    updateChargers(chargers) ==
+        groundChargers := chargers;
+
+    -- 地図の整合性を検証し、レポートを返す
+    -- 事後条件: 戻り値のステータスがValidであることと、全ての安全距離条件が満たされていることは同値
+    public validate: () ==> MapReport
+    validate() ==
+    (
+        dcl conflicts : seq of char := "";
+        dcl collisionWithRover : bool :=
+            if visionPosition = nil
+            then false
+            else let pos : Vision`Position = visionPosition in
+                exists obs in set visionObstacles & Vision`dist(pos, obs) < safeDistance;
+        dcl goalConflicts : set of GoalID := {
+            g.id | g in set elems groundGoals &
+            exists obs in set visionObstacles & Vision`dist(g.pos, obs) < safeDistance
+        };
+        dcl chargerConflicts : set of ChargerID := {
+            c.id | c in set elems groundChargers &
+            exists obs in set visionObstacles & Vision`dist(c.pos, obs) < safeDistance
+        };
+
+        if collisionWithRover
+        then conflicts := conflicts ^ "Rover position collides with obstacle. ";
+
+        if goalConflicts <> {}
+        then conflicts := conflicts ^ "Goals overlapping obstacles. ";
+
+        if chargerConflicts <> {}
+        then conflicts := conflicts ^ "Chargers overlapping obstacles. ";
+
+        if conflicts = ""
+        then (
+            status := <Valid>;
+            detail := "Map is valid.";
+            return mk_MapReport(status, detail)
+        )
+        else (
+            status := <Invalid>;
+            detail := conflicts;
+            return mk_MapReport(status, detail)
+        )
+    )
+    post 
+        let report = RESULT in
+        (report.status = <Valid> <=> 
+            (
+                (visionPosition <> nil => forall obs in set visionObstacles & Vision`dist(visionPosition, obs) >= safeDistance) and
+                (forall g in set elems groundGoals & forall obs in set visionObstacles & Vision`dist(g.pos, obs) >= safeDistance) and
+                (forall c in set elems groundChargers & forall obs in set visionObstacles & Vision`dist(c.pos, obs) >= safeDistance)
+            )
+        );
+
+    -- 現在のステータスを取得する
+    public getStatus: () ==> MapStatus
+    getStatus() == return status;
+
+    -- 詳細メッセージを取得する
+    public getDetail: () ==> seq of char
+    getDetail() == return detail;
+
+    -- 検証済みの障害物セットを取得する
+    public getValidatedObstacles: () ==> set of Position
+    getValidatedObstacles() == return visionObstacles
+    pre status = <Valid>;
+
+    public getCurrentPosition: () ==> Vision`Position
+    getCurrentPosition() == return visionPosition
+    pre visionPosition <> nil;
+
+    public getGoals: () ==> seq of Goal
+    getGoals() == return groundGoals;
+
+    public getChargers: () ==> seq of Charger
+    getChargers() == return groundChargers;
+
+end MapValidator
