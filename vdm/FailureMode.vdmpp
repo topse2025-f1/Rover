@@ -1,0 +1,235 @@
+class FailureMode is subclass of RoverTypes
+
+types
+    -- 障害イベント構造体
+    public FailureEvent ::
+        fault : Fault
+        state : [SystemState]
+        source : [MessageType];
+
+values
+    -- 支援待ちの制限時間
+    private helpCheckLimit : nat = 100;
+
+instance variables
+    -- 現在発生している障害
+    private currentFault : Fault := <None>;
+    
+    -- 障害発生時のシステム状態
+    private currentState : [SystemState] := nil;
+    
+    -- 障害の原因となったメッセージタイプ
+    private currentSource : [MessageType] := nil;
+    
+    -- 実行待ちの回復アクション
+    private pendingActions : seq of RecoveryAction := [];
+    
+    -- 支援要請済みフラグ
+    private helpRequested : bool := false;
+    
+    -- 待機時間カウンタ
+    private waitTicks : nat := 0;
+    
+    -- デフォルトの安全退避場所
+    private defaultSafeLocation : [Goal] := nil;
+    
+    -- GoalReasoningAgentへの参照
+    private gra : [GoalReasoningAgent] := nil;
+
+inv
+    -- 不変条件: 障害がない場合はアクションもない
+    (currentFault = <None> => pendingActions = []) and
+    -- 不変条件: 支援要請中は障害が発生していること
+    (helpRequested => currentFault <> <None>);
+
+functions
+    -- 障害の種類と原因に基づいて回復アクションを選択する
+    private selectAction : Fault * [MessageType] -> RecoveryAction
+    selectAction(fault, source) ==
+        cases fault :
+            <PlannerTimeout> -> <Reboot>,
+            <LocalizationFault> -> <RequestGroundHelp>,
+            <CommFailure> ->
+                if source <> nil and source = <communicationData>
+                then <RequestRoverHelp>
+                else <RequestGroundHelp>,
+            others -> <Await>
+        end;
+
+operations
+    -- GoalReasoningAgentをバインドする
+    public bindGoalAgent: GoalReasoningAgent ==> ()
+    bindGoalAgent(agent) == gra := agent;
+
+    -- 安全退避場所を設定する
+    public setSafeLocationGoal: Goal ==> ()
+    setSafeLocationGoal(goal) ==
+    (
+        defaultSafeLocation := goal;
+        if gra <> nil
+        then gra.setSafeLocation(goal)
+        else skip
+    );
+
+    -- 安全退避場所を適用する内部操作
+    private applySafeLocation: () ==> ()
+    applySafeLocation() ==
+    (
+        if defaultSafeLocation <> nil and gra <> nil
+        then gra.setSafeLocation(defaultSafeLocation)
+        else skip
+    );
+
+    -- 回復アクションをキューに追加する
+    private queueAction: RecoveryAction ==> ()
+    queueAction(action) ==
+    (
+        pendingActions := pendingActions ^ [action]
+    );
+
+    -- GoalReasoningAgentからの障害通知を処理する
+    -- 事後条件: 障害状態が更新され、適切なアクションがキューに追加されること
+    public activateFromGoalAgent: Fault * SystemState ==> ()
+    activateFromGoalAgent(fault, state) ==
+    (
+        currentFault := fault;
+        currentState := state;
+        currentSource := nil;
+        pendingActions := [];
+        queueAction(selectAction(fault, currentSource));
+        helpRequested := false;
+        waitTicks := 0
+    )
+    post 
+        currentFault = fault and
+        currentState = state and
+        currentSource = nil and
+        pendingActions = [selectAction(fault, nil)] and
+        not helpRequested and
+        waitTicks = 0;
+
+    -- バッテリーからの障害通知を処理する
+    -- 事後条件: LocalizationFaultとして扱われ、地上支援要請がキューに追加されること
+    public activateFromBattery: SystemState ==> ()
+    activateFromBattery(state) ==
+    (
+        currentFault := <LocalizationFault>;
+        currentState := state;
+        currentSource := nil;
+        pendingActions := [];
+        queueAction(<RequestGroundHelp>);
+        helpRequested := false;
+        waitTicks := 0
+    )
+    post 
+        currentFault = <LocalizationFault> and
+        currentState = state and
+        currentSource = nil and
+        pendingActions = [<RequestGroundHelp>] and
+        not helpRequested and
+        waitTicks = 0;
+
+    -- 通信からの障害通知を処理する
+    -- 事後条件: CommFailureとして扱われ、適切なアクションがキューに追加されること
+    public activateFromCommunication: MessageType ==> ()
+    activateFromCommunication(source) ==
+    (
+        currentFault := <CommFailure>;
+        currentState := nil;
+        currentSource := source;
+        pendingActions := [];
+        queueAction(selectAction(currentFault, currentSource));
+        helpRequested := false;
+        waitTicks := 0
+    )
+    post 
+        currentFault = <CommFailure> and
+        currentState = nil and
+        currentSource = source and
+        pendingActions = [selectAction(<CommFailure>, source)] and
+        not helpRequested and
+        waitTicks = 0;
+
+    -- 次の回復アクションを実行する
+    -- 事後条件: アクションが実行され、必要に応じて支援要請状態になるか、障害がクリアされる
+    public performNextAction: () ==> RecoveryAction
+    performNextAction() ==
+    (
+        if pendingActions = []
+        then return <Await>
+        else (
+            dcl action : RecoveryAction := hd pendingActions;
+            pendingActions := tl pendingActions;
+            if action = <RequestGroundHelp> or action = <RequestRoverHelp>
+            then (
+                helpRequested := true;
+                waitTicks := 0;
+                applySafeLocation()
+            )
+            elseif action = <Reboot>
+            then (
+                currentFault := <None>;
+                currentState := nil;
+                currentSource := nil;
+                helpRequested := false;
+                waitTicks := 0
+            )
+            else skip;
+            return action
+        )
+    );
+
+    -- 支援応答をポーリングする
+    -- 事後条件: 応答があれば支援要請状態を解除しtrueを返す
+    public pollHelpResponse: bool ==> bool
+    pollHelpResponse(responseArrived) ==
+    (
+        if not helpRequested
+        then return false
+        else (
+            if responseArrived
+            then (
+                helpRequested := false;
+                waitTicks := 0;
+                return true
+            )
+            else (
+                waitTicks := waitTicks + 1;
+                return false
+            )
+        )
+    );
+
+    -- 支援待ち時間が超過したか確認する
+    public helpWaitExceeded: () ==> bool
+    helpWaitExceeded() == return helpRequested and waitTicks >= helpCheckLimit;
+
+    -- 障害状態をクリアする
+    public clearFailure: () ==> ()
+    clearFailure() ==
+    (
+        currentFault := <None>;
+        currentState := nil;
+        currentSource := nil;
+        pendingActions := [];
+        helpRequested := false;
+        waitTicks := 0
+    );
+
+    -- 現在の障害を取得する
+    public getCurrentFault: () ==> Fault
+    getCurrentFault() == return currentFault;
+
+    -- 現在の状態を取得する
+    public getCurrentState: () ==> [SystemState]
+    getCurrentState() == return currentState;
+
+    -- 実行待ちのアクションを取得する
+    public getPendingActions: () ==> seq of RecoveryAction
+    getPendingActions() == return pendingActions;
+
+    -- 支援要請中かどうかを取得する
+    public isHelpRequested: () ==> bool
+    isHelpRequested() == return helpRequested;
+
+end FailureMode

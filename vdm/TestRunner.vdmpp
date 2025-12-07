@@ -1,0 +1,77 @@
+class TestRunner
+
+operations
+    -- Visionテストの結果を文字列に変換するヘルパー
+    private FormatVisionResults: seq of VisionSpecificationTests`TestResult ==> seq of char
+    FormatVisionResults(results) ==
+    (
+        dcl output : seq of char := "";
+        for r in results do (
+            output := output ^ r.name ^ ": " ^ (if r.passed then "OK" else "FAILED") ^ "\n";
+            if not r.passed 
+            then output := output ^ "  Details: " ^ r.details ^ "\n" 
+            else skip
+        );
+        return output
+    );
+
+    -- コンポーネントレベルのテスト実行
+    -- 対象: Vision, Battery, MapValidator, Communication
+    public RunComponentTests: () ==> seq of char
+    RunComponentTests() ==
+    (
+        dcl result : seq of char := "=== Component Level Tests ===\n";
+        
+        -- Vision
+        result := result ^ "\n[VisionSpecificationTests]\n";
+        result := result ^ FormatVisionResults(new VisionSpecificationTests().RunAll());
+
+        -- Battery
+        result := result ^ "\n[BatteryHardwareTestSuite]\n";
+        result := result ^ new BatteryHardwareTestSuite().RunAll();
+        
+        -- MapValidator
+        result := result ^ "\n[MapValidatorTestSuite]\n";
+        result := result ^ new MapValidatorTestSuite().RunAll();
+        
+        -- Communication
+        result := result ^ "\n[CommunicationTestSuite]\n";
+        result := result ^ new CommunicationTestSuite().RunAll();
+        
+        return result
+    );
+
+    -- システムレベルのテスト実行
+    -- 対象: GoalReasoningAgent, Planner, FailureMode
+    public RunSystemTests: () ==> seq of char
+    RunSystemTests() ==
+    (
+        dcl result : seq of char := "=== System Level Tests ===\n";
+        
+        -- GoalReasoningAgent
+        result := result ^ "\n[GoalReasoningAgentTestSuite]\n";
+        result := result ^ new GoalReasoningAgentTestSuite().RunAll();
+        
+        -- Planner (GRAとの連携含む)
+        result := result ^ "\n[PlannerTestSuite]\n";
+        result := result ^ new PlannerTestSuite().RunAll();
+        
+        -- FailureMode (システム全体の状態遷移に関わる)
+        result := result ^ "\n[FailureModeTestSuite]\n";
+        result := result ^ new FailureModeTestSuite().RunAll();
+        
+        return result
+    );
+
+    -- 全テスト実行
+    public RunAll: () ==> seq of char
+    RunAll() ==
+    (
+        dcl result : seq of char := "";
+        result := result ^ RunComponentTests();
+        result := result ^ "\n";
+        result := result ^ RunSystemTests();
+        return result
+    );
+
+end TestRunner
