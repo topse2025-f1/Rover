@@ -1,0 +1,31 @@
+class GoalReasoningAgentTestSuite is subclass of RoverTypes
+
+operations
+    public RunAll: () ==> seq of char
+    RunAll() ==
+    (
+        dcl results : seq of char := "";
+        results := results ^ TestGoalSelection();
+        return results
+    );
+
+    private TestGoalSelection: () ==> seq of char
+    TestGoalSelection() ==
+    (
+        dcl gra : GoalReasoningAgent := new GoalReasoningAgent();
+        dcl goals : seq of Goal := [
+            mk_Goal(mk_token("G1"), mk_Vision`Position(10, 10), 1),
+            mk_Goal(mk_token("G2"), mk_Vision`Position(20, 20), 2)
+        ];
+        dcl chargers : seq of Charger := [];
+        dcl selected : [Goal];
+        
+        gra.updateGoals(goals);
+        selected := gra.selectNextGoal(chargers);
+        
+        if selected <> nil and selected.id = mk_token("G1") -- 優先度順（リストの先頭）
+        then return "TestGoalSelection: OK\n"
+        else return "TestGoalSelection: FAILED\n"
+    );
+
+end GoalReasoningAgentTestSuite
