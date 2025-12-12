@@ -254,11 +254,11 @@ operations
         elseif preferredHelper = nil
         then skip
         else (
-            dcl posOpt : [Vision`Position] := if gra = nil then nil else gra.getLastKnownPosition();
+            dcl posOpt : [RoverTypes`Position] := if gra = nil then nil else gra.getLastKnownPosition();
             if posOpt = nil
             then skip
             else (
-                dcl pos : Vision`Position := posOpt;
+                dcl pos : RoverTypes`Position := posOpt;
                 dcl fault : Fault :=
                     if failureMode = nil
                     then <CommFailure>

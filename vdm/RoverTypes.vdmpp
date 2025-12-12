@@ -4,8 +4,10 @@ class RoverTypes
 -- 全てのコンポーネントはこのクラスを継承して使用する
 
 types
-    -- 位置情報（Visionクラスの定義を再利用）
-    public Position = Vision`Position;
+    -- 2次元座標を表すレコード
+    public Position ::
+        x : real
+        y : real;
     
     -- ゴールを一意に識別するID
     public GoalID = token;
@@ -84,15 +86,24 @@ functions
         then "true"
         else "false";
 
-    -- 2点間の距離を計算する（Visionクラスの関数をラップ）
+    -- 2点間の距離の二乗を計算する
+    public static dist : Position * Position -> real
+    dist(p1, p2) ==
+        let dx = p2.x - p1.x,
+            dy = p2.y - p1.y in
+        abs(dx * dx + dy * dy)
+    pre true
+    post RESULT >= 0;
+
+    -- 2点間の距離を計算する
     public static distance : Position * Position -> real
     distance(p1, p2) ==
-        Vision`dist(p1, p2);
+        dist(p1, p2);
 
     -- 2点が同じ場所にあるか判定する（許容誤差 1E-6）
     public static sameLocation : Position * Position -> bool
     sameLocation(p1, p2) ==
-        Vision`dist(p1, p2) < 1E-6;
+        dist(p1, p2) < 1E-6;
 
     -- プランのステップ数を返す
     public static planLength : Plan -> nat
@@ -116,7 +127,7 @@ functions
         then nil
         else let best in set chargers be st
                 forall other in set chargers &
-                    Vision`dist(pos, best.pos) <= Vision`dist(pos, other.pos)
+                    dist(pos, best.pos) <= dist(pos, other.pos)
              in best;
 
 end RoverTypes
