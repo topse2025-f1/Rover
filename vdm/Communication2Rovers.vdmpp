@@ -1,0 +1,127 @@
+class Communication2Rovers is subclass of RoverTypes
+
+types
+    -- ローバー間通信のブロードキャストメッセージ
+    public RoverBroadcast ::
+        helperId : token
+        position : Position
+        fault : Fault
+        message : seq of char;
+
+values
+    -- 通信プロトコル
+    private camProtocol : token = mk_token("CAM");
+
+instance variables
+    -- 登録された支援ローバーのIDセット
+    private registeredHelpers : set of token := {};
+    
+    -- 送信待ちのブロードキャストメッセージ
+    private pendingBroadcasts : seq of RoverBroadcast := [];
+    
+    -- 最後に受信したメッセージ
+    private lastReceived : [RoverBroadcast] := nil;
+    
+    -- 到着を待っている支援ローバーのID
+    private awaitingHelper : [token] := nil;
+    
+    -- コントローラへの参照
+    private controller : [RoverController] := nil;
+
+inv
+    -- 不変条件: 支援待ちのローバーIDは登録済みであること
+    awaitingHelper = nil or
+    (let helper : token = awaitingHelper in helper in set registeredHelpers)
+
+operations
+    -- コントローラを設定する
+    public setController: RoverController ==> ()
+    setController(coord) == controller := coord;
+
+    -- 支援ローバーを登録する
+    public registerHelper: token ==> ()
+    registerHelper(helperId) ==
+        registeredHelpers := registeredHelpers union { helperId };
+
+    -- ステータスをブロードキャストする
+    -- 事前条件: ヘルパーIDが登録済みで、プロトコルがCAMで、ペイロードが空でないこと
+    -- 事後条件: 送信待ちキューに追加され、支援待ち状態になること
+    public broadcastStatus: token * Position * Fault * seq of char * token ==> ()
+    broadcastStatus(helperId, pos, fault, payload, protocol) ==
+    (
+        dcl msg : RoverBroadcast := mk_RoverBroadcast(helperId, pos, fault, payload);
+        pendingBroadcasts := pendingBroadcasts ^ [msg];
+        awaitingHelper := helperId
+    )
+    pre helperId in set registeredHelpers and protocol = camProtocol and payload <> []
+    post 
+        len pendingBroadcasts = len pendingBroadcasts~ + 1 and
+        awaitingHelper = helperId;
+
+    -- 送信待ちのブロードキャストを取得する
+    public getPendingBroadcasts: () ==> seq of RoverBroadcast
+    getPendingBroadcasts() == return pendingBroadcasts;
+
+    -- 次のブロードキャストを取り出す
+    -- 事後条件: キューが空ならnil、そうでなければ先頭要素を返しキューから削除する
+    public consumeNextBroadcast: () ==> [RoverBroadcast]
+    consumeNextBroadcast() ==
+    (
+        if pendingBroadcasts = []
+        then return nil
+        else (
+            dcl msg : RoverBroadcast := hd pendingBroadcasts;
+            pendingBroadcasts := tl pendingBroadcasts;
+            return msg
+        )
+    )
+    post 
+        (pendingBroadcasts~ = [] => RESULT = nil) and
+        (pendingBroadcasts~ <> [] => RESULT = hd pendingBroadcasts~ and pendingBroadcasts = tl pendingBroadcasts~);
+
+    -- ブロードキャストを受信する
+    -- 事前条件: メッセージが空でなく、ヘルパーIDが登録済みであること
+    -- 事後条件: 最後に受信したメッセージが更新され、支援待ち状態になること
+    public receiveBroadcast: RoverBroadcast ==> ()
+    receiveBroadcast(msg) ==
+    (
+        lastReceived := msg;
+        awaitingHelper := msg.helperId
+    )
+    pre msg.message <> [] and msg.helperId in set registeredHelpers
+    post lastReceived = msg and awaitingHelper = msg.helperId;
+
+    -- 支援ローバーの到着を確認する
+    -- 事前条件: ヘルパーIDが登録済みであること
+    -- 事後条件: 待っていたヘルパーなら支援待ち状態を解除する
+    public confirmHelperArrival: token ==> ()
+    confirmHelperArrival(helperId) ==
+    (
+        if awaitingHelper = nil
+        then skip
+        else (
+            dcl current : token := awaitingHelper;
+            if current = helperId
+            then (
+                awaitingHelper := nil;
+                if controller <> nil
+                then controller.reportRoverArrival(helperId)
+                else skip
+            )
+            else skip
+        )
+    )
+    pre helperId in set registeredHelpers
+    post 
+        (awaitingHelper~ = helperId => awaitingHelper = nil) and
+        (awaitingHelper~ <> helperId => awaitingHelper = awaitingHelper~);
+
+    -- 最後に受信したブロードキャストを取得する
+    public getLastBroadcast: () ==> [RoverBroadcast]
+    getLastBroadcast() == return lastReceived;
+
+    -- 支援待ちかどうかを確認する
+    public isAwaitingHelper: () ==> bool
+    isAwaitingHelper() == return awaitingHelper <> nil;
+
+end Communication2Rovers
