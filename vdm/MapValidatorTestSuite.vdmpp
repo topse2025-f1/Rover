@@ -1,0 +1,51 @@
+class MapValidatorTestSuite is subclass of RoverTypes
+
+operations
+    public RunAll: () ==> seq of char
+    RunAll() ==
+    (
+        dcl results : seq of char := "";
+        results := results ^ TestValidMap();
+        results := results ^ TestInvalidMap();
+        return results
+    );
+
+    private TestValidMap: () ==> seq of char
+    TestValidMap() ==
+    (
+        dcl validator : MapValidator := new MapValidator();
+        dcl pos : Vision`Position := mk_Vision`Position(0, 0);
+        dcl obs : set of Vision`Position := {mk_Vision`Position(10, 10)};
+        dcl goals : seq of Goal := [mk_Goal(mk_token("G1"), mk_Vision`Position(5, 5), 1)];
+        dcl report : MapReport;
+        
+        validator.updateVision(pos, obs);
+        validator.updateGoals(goals);
+        
+        report := validator.validate();
+        
+        if report.status = <Valid>
+        then return "TestValidMap: OK\n"
+        else return "TestValidMap: FAILED\n"
+    );
+
+    private TestInvalidMap: () ==> seq of char
+    TestInvalidMap() ==
+    (
+        dcl validator : MapValidator := new MapValidator();
+        dcl pos : Vision`Position := mk_Vision`Position(0, 0);
+        dcl obs : set of Vision`Position := {mk_Vision`Position(5, 5)};
+        dcl goals : seq of Goal := [mk_Goal(mk_token("G1"), mk_Vision`Position(5, 5), 1)]; -- 障害物と重なる
+        dcl report : MapReport;
+        
+        validator.updateVision(pos, obs);
+        validator.updateGoals(goals);
+        
+        report := validator.validate();
+        
+        if report.status = <Invalid>
+        then return "TestInvalidMap: OK\n"
+        else return "TestInvalidMap: FAILED\n"
+    );
+
+end MapValidatorTestSuite
