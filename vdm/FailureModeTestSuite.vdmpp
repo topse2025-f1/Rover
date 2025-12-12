@@ -1,0 +1,42 @@
+class FailureModeTestSuite is subclass of RoverTypes
+
+operations
+    public RunAll: () ==> seq of char
+    RunAll() ==
+    (
+        dcl results : seq of char := "";
+        results := results ^ TestFailureActivation();
+        results := results ^ TestRecoveryAction();
+        return results
+    );
+
+    private TestFailureActivation: () ==> seq of char
+    TestFailureActivation() ==
+    (
+        dcl fm : FailureMode := new FailureMode();
+        dcl state : SystemState := mk_SystemState(100, false, nil);
+        
+        -- バッテリー障害の発生
+        fm.activateFromBattery(state);
+        
+        if fm.getCurrentFault() = <LocalizationFault>
+        then return "TestFailureActivation: OK\n"
+        else return "TestFailureActivation: FAILED\n"
+    );
+
+    private TestRecoveryAction: () ==> seq of char
+    TestRecoveryAction() ==
+    (
+        dcl fm : FailureMode := new FailureMode();
+        dcl state : SystemState := mk_SystemState(100, false, nil);
+        dcl action : RecoveryAction;
+        
+        fm.activateFromBattery(state);
+        action := fm.performNextAction();
+        
+        if action = <RequestGroundHelp> and fm.isHelpRequested()
+        then return "TestRecoveryAction: OK\n"
+        else return "TestRecoveryAction: FAILED\n"
+    );
+
+end FailureModeTestSuite
