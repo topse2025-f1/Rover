@@ -1,0 +1,62 @@
+class PlannerTestSuite is subclass of RoverTypes
+
+operations
+    public RunAll: () ==> seq of char
+    RunAll() ==
+    (
+        dcl results : seq of char := "";
+        results := results ^ TestDestinationPlanner();
+        results := results ^ TestChargingPlanner();
+        return results
+    );
+
+    private TestDestinationPlanner: () ==> seq of char
+    TestDestinationPlanner() ==
+    (
+        dcl planner : ComputePlan2Destination := new ComputePlan2Destination();
+        dcl gra : GoalReasoningAgent := new GoalReasoningAgent();
+        dcl startPos : Position := mk_Vision`Position(0, 0);
+        dcl targetGoal : Goal := mk_Goal(mk_token("G1"), mk_Vision`Position(10, 10), 1);
+        dcl obstacles : set of Position := {};
+        dcl chargers : seq of Charger := [];
+        dcl status : PlanStatus;
+        
+        gra.updateGoals([targetGoal]);
+        planner.setGoalAgent(gra);
+        
+        status := planner.requestPlan(startPos, obstacles, chargers);
+        
+        if status = <Ready> and planner.getLastPlan() <> nil
+        then return "TestDestinationPlanner: OK\n"
+        else return "TestDestinationPlanner: FAILED\n"
+    );
+
+    private TestChargingPlanner: () ==> seq of char
+    TestChargingPlanner() ==
+    (
+        dcl planner : ComputePlan2Charging := new ComputePlan2Charging();
+        dcl gra : GoalReasoningAgent := new GoalReasoningAgent();
+        dcl startPos : Position := mk_Vision`Position(0, 0);
+        dcl targetCharger : Charger := mk_Charger(mk_token("C1"), mk_Vision`Position(5, 5));
+        dcl obstacles : set of Position := {};
+        dcl chargers : seq of Charger := [targetCharger];
+        dcl status : PlanStatus;
+        
+        -- 充電要求をセットし、現在位置を設定（GRAのcurrentGoalが必要）
+        gra.setRechargeFlag(true);
+        gra.setCurrentPosition(startPos);
+        -- selectNextGoalを呼んでcurrentGoalを設定させる
+        if gra.selectNextGoal(chargers) <> nil
+        then skip
+        else skip;
+
+        planner.setGoalAgent(gra);
+        
+        status := planner.requestPlan(obstacles, chargers);
+        
+        if status = <Ready> and planner.getLastPlan() <> nil
+        then return "TestChargingPlanner: OK\n"
+        else return "TestChargingPlanner: FAILED\n"
+    );
+
+end PlannerTestSuite

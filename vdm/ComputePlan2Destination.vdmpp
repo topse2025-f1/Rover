@@ -1,0 +1,112 @@
+class ComputePlan2Destination is subclass of RoverTypes
+
+-- 目的地への移動プランを生成するクラス
+-- 現在位置とゴール位置を結ぶ経路を計算し、障害物との衝突を回避する
+
+instance variables
+    -- ゴール推論エージェントへの参照
+    private gra : [GoalReasoningAgent] := nil;
+    
+    -- 最後に生成されたプラン
+    private lastPlan : [Plan] := nil;
+    
+    -- 最後のプラン生成ステータス
+    private lastStatus : PlanStatus := <NoPlan>;
+    
+    -- 故障モードシミュレーション用フラグ
+    private failureActive : bool := false;
+    
+    -- シミュレートする故障の種類
+    private failureReason : Fault := <PlannerTimeout>;
+    
+    -- 故障時のシステム状態
+    private failureState : SystemState := mk_SystemState(0, true, nil);
+
+operations
+    -- ゴール推論エージェントを設定する
+    public setGoalAgent : GoalReasoningAgent ==> ()
+    setGoalAgent(agent) == gra := agent;
+
+    -- 故障モードを有効化/無効化する（テスト用）
+    public setFailureMode : bool ==> ()
+    setFailureMode(flag) == failureActive := flag;
+
+    -- 故障時の応答を設定する（テスト用）
+    public configureFailureResponse : Fault * SystemState ==> ()
+    configureFailureResponse(reason, state) ==
+    (
+        failureReason := reason;
+        failureState := state
+    );
+
+    -- プラン生成を要求する
+    -- 引数 currentPos: 現在位置
+    -- 引数 obstacles: 障害物集合
+    -- 引数 chargers: 充電器リスト（このクラスでは使用しないがインターフェース統一のため）
+    -- 戻り値: プラン生成ステータス
+    -- 事後条件: 
+    --   Readyなら有効なプランが生成されていること
+    --   Failure/NoPlanならプランはnilであること
+    public requestPlan : Vision`Position * set of Vision`Position * seq of Charger ==> PlanStatus
+    requestPlan(currentPos, obstacles, chargers) ==
+    (
+        if gra = nil
+        then (
+            lastPlan := nil;
+            lastStatus := <Failure>;
+            return lastStatus
+        )
+        else (
+            dcl goalOpt : [Goal] := nil;
+            gra.setCurrentPosition(currentPos);
+            if failureActive
+            then (
+                lastPlan := nil;
+                lastStatus := <Failure>;
+                gra.plannerFeedback(<Destination>, lastStatus);
+                gra.notifyFailure(failureReason, failureState);
+                return lastStatus
+            )
+            else (
+                goalOpt := gra.selectNextGoal(chargers);
+                if goalOpt = nil
+                then (
+                    lastPlan := nil;
+                    lastStatus := <NoPlan>;
+                    gra.plannerFeedback(<Destination>, lastStatus);
+                    return lastStatus
+                )
+                else (
+                    dcl goal : Goal := goalOpt;
+                    if exists obs in set obstacles & sameLocation(obs, goal.pos)
+                    then (
+                        lastPlan := nil;
+                        lastStatus := <NoPlan>;
+                        gra.plannerFeedback(<Destination>, lastStatus);
+                        return lastStatus
+                    )
+                    else (
+                        lastPlan := mk_Plan([currentPos, goal.pos]);
+                        lastStatus := <Ready>;
+                        gra.plannerFeedback(<Destination>, lastStatus);
+                        return lastStatus
+                    )
+                )
+            )
+        )
+    )
+    post 
+        let status = RESULT in
+        (status = <Ready> => lastPlan <> nil and len lastPlan.steps >= 2) and
+        (status = <Failure> => lastPlan = nil) and
+        (status = <NoPlan> => lastPlan = nil);
+
+    -- 最後に生成されたプランを取得する
+    public getLastPlan : () ==> [Plan]
+    getLastPlan() == return lastPlan;
+
+    -- 最後のステータスを取得する
+    public getLastStatus : () ==> PlanStatus
+    getLastStatus() == return lastStatus;
+
+end ComputePlan2Destination
