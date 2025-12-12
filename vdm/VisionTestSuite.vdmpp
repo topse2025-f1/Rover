@@ -1,4 +1,4 @@
-class VisionSpecificationTests is subclass of Vision
+class VisionSpecificationTests is subclass of RoverTypes
 
 types
     public TestResult ::
@@ -6,7 +6,7 @@ types
         passed : bool
         details : seq of char;
 
-    public VisionPosition = Vision`Position;
+    public VisionPosition = RoverTypes`Position;
     public VisionSensorReading = Vision`SensorReading;
 
 functions
@@ -26,21 +26,17 @@ operations
     private RegisterNominalReadings: () ==> ()
     RegisterNominalReadings() ==
     (
-        vision.updateSensor(mk_token("camera-1"), Vision`mk_SensorReading(<Camera>, [
-            Vision`mk_Position(0.0, 0.0),
-            Vision`mk_Position(2.0, 0.0)
-        ]));
-        vision.updateSensor(mk_token("lidar-1"), Vision`mk_SensorReading(<LiDAR>, [
-            Vision`mk_Position(0.0, 2.0),
-            Vision`mk_Position(2.0, 2.0)
-        ]))
+        dcl camera1 : Vision`SensorReading := mk_Vision`SensorReading(<Camera>, [mk_RoverTypes`Position(0.0, 0.0), mk_RoverTypes`Position(2.0, 0.0)]);
+        dcl lidar1 : Vision`SensorReading := mk_Vision`SensorReading(<LiDAR>, [mk_RoverTypes`Position(0.0, 2.0), mk_RoverTypes`Position(2.0, 2.0)]);
+        vision.updateSensor(mk_token("camera-1"), camera1);
+        vision.updateSensor(mk_token("lidar-1"), lidar1)
     );
 
     private EstimateFromPoints: seq of VisionPosition ==> VisionPosition
     EstimateFromPoints(points) ==
     (
         ResetVision();
-    vision.updateSensor(mk_token("sensor-temp"), Vision`mk_SensorReading(<Camera>, points));
+        vision.updateSensor(mk_token("sensor-temp"), mk_Vision`SensorReading(<Camera>, points));
         vision.processSensorData();
         return vision.getCurrentPosition()
     )
@@ -50,45 +46,45 @@ operations
     TestV1_SupportsCameraAndLiDAR() ==
     (
         ResetVision();
-    vision.updateSensor(mk_token("camera-V1"), Vision`mk_SensorReading(<Camera>, [ Vision`mk_Position(0.0, 0.0), Vision`mk_Position(2.0, 0.0) ]));
-    vision.updateSensor(mk_token("lidar-V1"), Vision`mk_SensorReading(<LiDAR>, [ Vision`mk_Position(0.0, 2.0), Vision`mk_Position(2.0, 2.0) ]));
+        vision.updateSensor(mk_token("camera-V1"), mk_Vision`SensorReading(<Camera>, [ mk_RoverTypes`Position(0.0, 0.0), mk_RoverTypes`Position(2.0, 0.0) ]));
+        vision.updateSensor(mk_token("lidar-V1"), mk_Vision`SensorReading(<LiDAR>, [ mk_RoverTypes`Position(0.0, 2.0), mk_RoverTypes`Position(2.0, 2.0) ]));
         vision.processSensorData();
-                return let pos = vision.getCurrentPosition(),
-                                      expected = Vision`mk_Position(1.0, 1.0),
-                                    ok = pos.x = expected.x and pos.y = expected.y
-               in mkResult("V1: accept camera and LiDAR readings", ok,
-                    if ok
-                                        then "processSensorData merged camera and LiDAR points"
-                                        else "currentPosition did not match average of camera and LiDAR readings")
+        return let pos = vision.getCurrentPosition(),
+                        expected = mk_RoverTypes`Position(1.0, 1.0),
+                        ok = pos.x = expected.x and pos.y = expected.y
+        in mkResult("V1: accept camera and LiDAR readings", ok,
+            if ok
+            then "processSensorData merged camera and LiDAR points"
+            else "currentPosition did not match average of camera and LiDAR readings")
     );
 
     public TestV2_ReturnsCurrentPositionAndObstacles: () ==> TestResult
     TestV2_ReturnsCurrentPositionAndObstacles() ==
     (
         ResetVision();
-        vision.updateSensor(mk_token("camera-V2"), Vision`mk_SensorReading(<Camera>, [
-            Vision`mk_Position(0.0, 0.0),
-            Vision`mk_Position(2.0, 0.0)
+        vision.updateSensor(mk_token("camera-V2"), mk_Vision`SensorReading(<Camera>, [
+            mk_RoverTypes`Position(0.0, 0.0),
+            mk_RoverTypes`Position(2.0, 0.0)
         ]));
-        vision.updateSensor(mk_token("lidar-V2"), Vision`mk_SensorReading(<LiDAR>, [
-            Vision`mk_Position(0.0, 2.0),
-            Vision`mk_Position(2.0, 2.0)
+        vision.updateSensor(mk_token("lidar-V2"), mk_Vision`SensorReading(<LiDAR>, [
+            mk_RoverTypes`Position(0.0, 2.0),
+            mk_RoverTypes`Position(2.0, 2.0)
         ]));
         vision.processSensorData();
-                return let pos = vision.getCurrentPosition(),
-                                    obs = vision.getObstacles(),
-                                      expectedPos = Vision`mk_Position(1.0, 1.0),
-                                    expectedObstacles = {
-                                          Vision`mk_Position(0.0, 0.0),
-                                          Vision`mk_Position(2.0, 0.0),
-                                          Vision`mk_Position(0.0, 2.0),
-                                          Vision`mk_Position(2.0, 2.0)
-                  },
-                                    ok = pos = expectedPos and obs = expectedObstacles
-               in mkResult("V2: returns position and obstacle set", ok,
-                    if ok
-                                        then "currentPosition and obstacle set match expected values"
-                                        else "currentPosition or obstacle set deviates from expected aggregate values")
+        return let pos = vision.getCurrentPosition(),
+                        obs = vision.getObstacles(),
+                        expectedPos = mk_RoverTypes`Position(1.0, 1.0),
+                        expectedObstacles = {
+                            mk_RoverTypes`Position(0.0, 0.0),
+                            mk_RoverTypes`Position(2.0, 0.0),
+                            mk_RoverTypes`Position(0.0, 2.0),
+                            mk_RoverTypes`Position(2.0, 2.0)
+                        },
+                        ok = pos = expectedPos and obs = expectedObstacles
+        in mkResult("V2: returns position and obstacle set", ok,
+            if ok
+            then "currentPosition and obstacle set match expected values"
+            else "currentPosition or obstacle set deviates from expected aggregate values")
     );
 
     public TestV3_AccuracyThreshold: () ==> TestResult
@@ -110,10 +106,10 @@ operations
         ResetVision();
         RegisterNominalReadings();
         vision.processSensorData();
-    return let pos = vision.getCurrentPosition(),
-          obs = vision.getObstacles(),
-          safe = forall o in set obs & Vision`dist(pos, o) >= 1
-           in mkResult("V4: current position avoids obstacles", safe,
+        return let pos = vision.getCurrentPosition(),
+                        obs = vision.getObstacles(),
+                        safe = forall o in set obs & RoverTypes`dist(pos, o) >= 1.0
+        in mkResult("V4: current position avoids obstacles", safe,
             if safe
             then "no obstacle found within safety distance"
             else "detected obstacle closer than 1m to current position")
@@ -125,9 +121,9 @@ operations
         ResetVision();
         RegisterNominalReadings();
         vision.processSensorData();
-    return let truePos = Vision`mk_Position(0.5, 1.2),
+        return let truePos = mk_RoverTypes`Position(0.5, 1.2),
                         res = vision.assertPositionTolerance(truePos)
-                    in mkResult("V5: within +/-2m of true position", res,
+        in mkResult("V5: within +/-2m of true position", res,
             if res
             then "assertPositionTolerance confirmed tolerance"
             else "estimated position outside +/-2m tolerance")
@@ -139,9 +135,9 @@ operations
         ResetVision();
         RegisterNominalReadings();
         vision.processSensorData();
-    return let truePos = Vision`mk_Position(10.0, 10.0),
-          res = vision.assertPositionTolerance(truePos)
-           in mkResult("V5: tolerance violation detected", not res,
+        return let truePos = mk_RoverTypes`Position(10.0, 10.0),
+                        res = vision.assertPositionTolerance(truePos)
+        in mkResult("V5: tolerance violation detected", not res,
             if not res
             then "assertPositionTolerance correctly rejected far true position"
             else "expected tolerance check to fail for far true position")
@@ -151,20 +147,20 @@ operations
     TestV6_LocalRobustness() ==
     (
         dcl basePos : VisionPosition := EstimateFromPoints([
-            Vision`mk_Position(0.0, 0.0),
-            Vision`mk_Position(2.0, 0.0)
+            mk_RoverTypes`Position(0.0, 0.0),
+            mk_RoverTypes`Position(2.0, 0.0)
         ]);
         dcl perturbedPos : VisionPosition := EstimateFromPoints([
-            Vision`mk_Position(0.0, 0.0),
-            Vision`mk_Position(2.0, 0.1)
+            mk_RoverTypes`Position(0.0, 0.0),
+            mk_RoverTypes`Position(2.0, 0.1)
         ]);
-                return let deltaX = abs(basePos.x - perturbedPos.x),
-                                    deltaY = abs(basePos.y - perturbedPos.y),
-                                    robust = deltaX <= 0.05 and deltaY <= 0.05
-               in mkResult("V6: robust to small perturbations", robust,
-                                        if robust
-                                        then "position estimate changed by at most 0.05 for small input perturbation"
-                                        else "position estimate moved more than 0.05 after small input perturbation")
+        return let deltaX = abs(basePos.x - perturbedPos.x),
+                        deltaY = abs(basePos.y - perturbedPos.y),
+                        robust = deltaX <= 0.05 and deltaY <= 0.05
+        in mkResult("V6: robust to small perturbations", robust,
+            if robust
+            then "position estimate changed by at most 0.05 for small input perturbation"
+            else "position estimate moved more than 0.05 after small input perturbation")
     );
 
     public RunAll: () ==> seq of TestResult

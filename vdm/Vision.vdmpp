@@ -1,4 +1,4 @@
-class Vision
+class Vision is subclass of RoverTypes
 
 -- センサ情報を統合し、ローバーの現在位置推定と障害物検知を行うクラス
 -- V3要件: 識別精度は常に95%以上であること
@@ -11,10 +11,8 @@ types
 	-- センサの種類（カメラまたはLiDAR）
 	public SensorType = <Camera> | <LiDAR>;
 	
-	-- 2次元座標を表すレコード
-	public Position ::
-		x : real
-		y : real;
+	-- 位置型のエイリアス（RoverTypes.Position を参照）
+	public Position = RoverTypes`Position;
 		
 	-- センサからの読み取りデータ
 	public SensorReading ::
@@ -24,26 +22,12 @@ types
 	-- 障害物の集合（位置の集合）
 	public Obstacles = set of Position;
 
-functions
-	-- 2点間の距離の二乗を計算する（比較用）
-	-- 引数 p1: 点1
-	-- 引数 p2: 点2
-	-- 戻り値: 距離の二乗（非負の実数）
-	public static dist : Position * Position -> real
-	dist(p1, p2) ==
-		let dx = p2.x - p1.x,
-		    dy = p2.y - p1.y in
-		abs(dx * dx + dy * dy)  -- 実際の距離は平方根が必要だが、比較用なので省略
-	pre true
-	post RESULT >= 0;
-
-
 instance variables
 	-- 最新のセンサ読み取り値を保持するマップ
 	private lastReadings : map SensorID to SensorReading := {|->};
 	
 	-- 推定された現在のローバー位置
-	private currentPosition : Position := mk_Position(0.0, 0.0);
+	private currentPosition : Position := mk_RoverTypes`Position(0.0, 0.0);
 	
 	-- 検知された障害物の集合
 	private obstacles : Obstacles := {};
@@ -61,7 +45,7 @@ inv
 
 	-- 不変条件: 現在位置と全ての障害物は、最低安全距離（1m）以上離れていること
 	forall obs in set obstacles &
-		dist(currentPosition, obs) >= 1
+		RoverTypes`dist(currentPosition, obs) >= 1
 
 operations
 	-- センサからの読み取り値を更新する
@@ -81,33 +65,7 @@ operations
 	--   有効なデータがあれば位置が更新されていること
 	--   入力された全ての点が障害物として登録されていること
 	public processSensorData: () ==> ()
-	processSensorData() ==
-	(
-		dcl totalX : real := 0;
-		dcl totalY : real := 0;
-		dcl count : real := 0;
-		dcl allPoints : set of Position := {};
-
-		for all id in set dom lastReadings do (
-			dcl reading : SensorReading := lastReadings(id);
-			dcl idx : nat1 := 1;
-			while idx <= len reading.points do (
-				dcl p : Position := reading.points(idx);
-				totalX := totalX + p.x;
-				totalY := totalY + p.y;
-				allPoints := allPoints union {p};
-				count := count + 1;
-				idx := idx + 1
-			)
-		);
-		if count > 0 
-		then currentPosition := mk_Position(
-			totalX / count,
-			totalY / count
-			);
-		obstacles := allPoints;
-		return
-	)
+	processSensorData() == calPositionAndObstacles()
 	pre dom lastReadings <> {}
 	post 
 		(exists id in set dom lastReadings & len lastReadings(id).points > 0) =>
@@ -120,11 +78,11 @@ operations
 	-- 事後条件: 結果が true ならば、距離の二乗が 4（2の二乗）以下であること
 	public assertPositionTolerance: Position ==> bool
 	assertPositionTolerance(truePos) == (
-		dcl res : bool := dist(truePos, currentPosition) <= 4;
+		dcl res : bool := RoverTypes`dist(truePos, currentPosition) <= 4;
 		return res
 	)
 	pre true
-	post RESULT => dist(truePos, currentPosition) <= 4;
+	post RESULT => RoverTypes`dist(truePos, currentPosition) <= 4;
 
 	-- 現在の識別精度が要件（95%以上）を満たしているか検証する
 	-- 戻り値: 要件を満たしていれば true
@@ -145,6 +103,36 @@ operations
 	public getObstacles: () ==> Obstacles
 	getObstacles() == (
 		return obstacles
+	);
+
+	-- 現在位置と障害物位置を更新する（隠蔽関数）
+	private calPositionAndObstacles: () ==> ()
+	calPositionAndObstacles() ==
+	(
+		dcl totalX : real := 0;
+		dcl totalY : real := 0;
+		dcl count : real := 0;
+		dcl allPoints : set of Position := {};
+
+		for all id in set dom lastReadings do (
+			dcl reading : SensorReading := lastReadings(id);
+			dcl idx : nat1 := 1;
+			while idx <= len reading.points do (
+				dcl p : Position := reading.points(idx);
+				totalX := totalX + p.x;
+				totalY := totalY + p.y;
+				allPoints := allPoints union {p};
+				count := count + 1;
+				idx := idx + 1
+			)
+		);
+		if count > 0 
+		then currentPosition := mk_RoverTypes`Position(
+			totalX / count,
+			totalY / count
+			);
+		obstacles := allPoints;
+		return
 	);
 
 end Vision
