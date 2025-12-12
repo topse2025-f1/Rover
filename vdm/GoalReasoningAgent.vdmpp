@@ -1,0 +1,244 @@
+class GoalReasoningAgent is subclass of RoverTypes
+
+-- ゴール選択、充電要求の管理、ミッション完了判定を行うエージェントクラス
+-- 優先度付きゴールリストを管理し、状況に応じて次の行動を決定する
+
+instance variables
+    -- 優先度順にソートされたゴールリスト
+    private goals : seq of Goal := [];
+    
+    -- 現在選択されているゴール
+    private currentGoal : [Goal] := nil;
+    
+    -- 充電要求フラグ（trueなら充電が必要）
+    private rechargeRequested : bool := false;
+    
+    -- 現在のゴールに到達したかどうかのフラグ
+    private atGoalFlag : bool := false;
+    
+    -- 故障時に退避すべき安全地点
+    private safeLocation : [Goal] := nil;
+    
+    -- 外部からの指示待ち状態かどうか
+    private awaitingInstruction : bool := false;
+    
+    -- 全ミッション完了フラグ
+    private missionComplete : bool := false;
+    
+    -- 最後に発生した故障の種類
+    private lastFailure : Fault := <None>;
+    
+    -- 故障時のシステム状態
+    private lastSystemState : [SystemState] := nil;
+    
+    -- 最後に記録されたローバーの位置
+    private lastPosition : [Vision`Position] := nil;
+    
+    -- 最後に使用されたプランナーの種類
+    private lastPlannerKind : [PlannerKind] := nil;
+    
+    -- コントローラへの参照
+    private controller : [RoverController] := nil;
+
+functions
+    -- ゴールリストが優先度順（降順または昇順、ここでは実装依存だが仕様上は整列済み）であることを確認
+    private isSorted : seq of Goal -> bool
+    isSorted(gs) ==
+        if len gs <= 1
+        then true
+        else let first = hd gs, restSeq = tl gs, second = hd restSeq in
+             first.priority <= second.priority and isSorted(restSeq)
+    measure len gs;
+
+    -- 指定されたゴールをリストから削除する
+    private removeGoal : Goal * seq of Goal -> seq of Goal
+    removeGoal(g, gs) ==
+        if gs = []
+        then []
+        elseif (hd gs).id = g.id
+        then tl gs
+        else [hd gs] ^ removeGoal(g, tl gs)
+    measure len gs;
+
+operations
+    -- コントローラを設定する
+    public setController: RoverController ==> ()
+    setController(coord) == controller := coord;
+
+    -- ゴールリストを更新する
+    -- 事前条件: 新しいゴールリストはソート済みであること
+    -- 事後条件: ゴールリストが更新され、空ならミッション完了となること
+    public updateGoals: seq of Goal ==> ()
+    updateGoals(newGoals) ==
+    (
+        goals := newGoals;
+        missionComplete := goals = [];
+        if goals = []
+        then currentGoal := nil
+        else skip
+    )
+    pre isSorted(newGoals)
+    post goals = newGoals and (goals = [] => missionComplete);
+
+    -- 現在位置を更新する（プランニング用）
+    public setCurrentPosition: Vision`Position ==> ()
+    setCurrentPosition(pos) == lastPosition := pos
+    post lastPosition = pos;
+
+    -- 充電要求フラグを設定する
+    public setRechargeFlag: bool ==> ()
+    setRechargeFlag(flag) ==
+    (
+        rechargeRequested := flag;
+        if not rechargeRequested and goals = []
+        then missionComplete := true
+        else skip
+    )
+    post rechargeRequested = flag;
+
+    -- 現在のゴールに到達したことをマークし、リストから削除する
+    public markGoalAchieved: () ==> ()
+    markGoalAchieved() ==
+    (
+        atGoalFlag := true;
+        if currentGoal <> nil
+        then goals := removeGoal(currentGoal, goals)
+        else skip;
+        missionComplete := (goals = [] and not rechargeRequested);
+        currentGoal := nil
+    )
+    post atGoalFlag and currentGoal = nil;
+
+    -- 到達フラグをリセットする
+    public resetAtGoal: () ==> ()
+    resetAtGoal() == atGoalFlag := false
+    post not atGoalFlag;
+
+    -- 安全退避地点を設定する
+    public setSafeLocation: Goal ==> ()
+    setSafeLocation(goal) == safeLocation := goal
+    post safeLocation = goal;
+
+    -- 安全退避地点をクリアする
+    public clearSafeLocation: () ==> ()
+    clearSafeLocation() == safeLocation := nil
+    post safeLocation = nil;
+
+    -- 次のゴールを選択する
+    -- 優先順位: ミッション完了 -> 充電要求 -> 安全退避 -> 通常ゴール
+    public selectNextGoal: seq of Charger ==> [Goal]
+    selectNextGoal(chargers) ==
+    (
+        if missionComplete
+        then (
+            currentGoal := nil;
+            atGoalFlag := false;
+            awaitingInstruction := false;
+            return currentGoal
+        )
+        elseif rechargeRequested
+        then (
+            if lastPosition = nil
+            then (
+                currentGoal := nil;
+                atGoalFlag := false;
+                awaitingInstruction := true;
+                return currentGoal
+            )
+            else (
+                dcl pos : Vision`Position := lastPosition;
+                dcl chargerSet : set of Charger := { c | c in set elems chargers };
+                dcl nearest : [Charger] := nearestCharger(pos, chargerSet);
+                if nearest = nil
+                then (
+                    currentGoal := nil;
+                    atGoalFlag := false;
+                    awaitingInstruction := true;
+                    return currentGoal
+                )
+                else (
+                    currentGoal := mk_Goal(nearest.id, nearest.pos, 0);
+                    atGoalFlag := false;
+                    awaitingInstruction := false;
+                    missionComplete := false;
+                    return currentGoal
+                )
+            )
+        )
+        elseif safeLocation <> nil
+        then (
+            currentGoal := safeLocation;
+            safeLocation := nil;
+            atGoalFlag := false;
+            awaitingInstruction := false;
+            return currentGoal
+        )
+        elseif goals = []
+        then (
+            currentGoal := nil;
+            atGoalFlag := false;
+            missionComplete := true;
+            awaitingInstruction := false;
+            return currentGoal
+        )
+        else (
+            currentGoal := hd goals;
+            atGoalFlag := false;
+            awaitingInstruction := false;
+            missionComplete := false;
+            return currentGoal
+        )
+    )
+    post RESULT = currentGoal;
+
+    -- プランナーからのフィードバックを受け取る
+    public plannerFeedback: PlannerKind * PlanStatus ==> ()
+    plannerFeedback(kind, status) ==
+    (
+        lastPlannerKind := kind;
+        if status = <NoPlan> or status = <Failure>
+        then awaitingInstruction := true
+        else awaitingInstruction := false
+    );
+
+    -- 故障を通知し、コントローラに報告する
+    public notifyFailure: Fault * SystemState ==> ()
+    notifyFailure(fault, state) ==
+    (
+        lastFailure := fault;
+        lastSystemState := state;
+        awaitingInstruction := true;
+        if controller <> nil
+        then controller.reportPlannerFailure(fault, state)
+        else skip
+    );
+
+    -- 指示待ち状態かどうかを返す
+    public isAwaitingInstruction: () ==> bool
+    isAwaitingInstruction() == return awaitingInstruction;
+
+    -- ミッション完了状態かどうかを返す
+    public isMissionComplete: () ==> bool
+    isMissionComplete() == return missionComplete;
+
+    -- 現在のゴールを返す
+    public getCurrentGoal: () ==> [Goal]
+    getCurrentGoal() == return currentGoal;
+
+    -- 直前にゴールに到達したかどうかを返す
+    public wasAtGoal: () ==> bool
+    wasAtGoal() == return atGoalFlag;
+
+    -- 故障情報を返す
+    public getFailureInfo: () ==> [SystemState]
+    getFailureInfo() == return lastSystemState;
+
+    -- 最後の故障種類を返す
+    public getLastFailure: () ==> Fault
+    getLastFailure() == return lastFailure;
+
+    -- 最後に記録された位置を返す
+    public getLastKnownPosition: () ==> [Vision`Position]
+    getLastKnownPosition() == return lastPosition;
+
+end GoalReasoningAgent
