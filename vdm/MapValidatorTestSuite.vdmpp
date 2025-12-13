@@ -14,9 +14,9 @@ operations
     TestValidMap() ==
     (
         dcl validator : MapValidator := new MapValidator();
-        dcl pos : Vision`Position := mk_Vision`Position(0, 0);
-        dcl obs : set of Vision`Position := {mk_Vision`Position(10, 10)};
-        dcl goals : seq of Goal := [mk_Goal(mk_token("G1"), mk_Vision`Position(5, 5), 1)];
+        dcl pos : RoverTypes`Position := mk_RoverTypes`Position(0, 0);
+        dcl obs : set of RoverTypes`Position := {mk_RoverTypes`Position(10, 10)};
+        dcl goals : seq of Goal := [mk_Goal(mk_token("G1"), mk_RoverTypes`Position(5, 5), 1)];
         dcl report : MapReport;
         
         validator.updateVision(pos, obs);
@@ -33,9 +33,9 @@ operations
     TestInvalidMap() ==
     (
         dcl validator : MapValidator := new MapValidator();
-        dcl pos : Vision`Position := mk_Vision`Position(0, 0);
-        dcl obs : set of Vision`Position := {mk_Vision`Position(5, 5)};
-        dcl goals : seq of Goal := [mk_Goal(mk_token("G1"), mk_Vision`Position(5, 5), 1)]; -- 障害物と重なる
+        dcl pos : RoverTypes`Position := mk_RoverTypes`Position(0, 0);
+        dcl obs : set of RoverTypes`Position := {mk_RoverTypes`Position(5, 5)};
+        dcl goals : seq of Goal := [mk_Goal(mk_token("G1"), mk_RoverTypes`Position(5, 5), 1)]; -- 障害物と重なる
         dcl report : MapReport;
         
         validator.updateVision(pos, obs);

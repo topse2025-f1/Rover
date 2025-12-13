@@ -47,7 +47,7 @@ operations
     -- 事後条件: 
     --   Readyなら有効なプランが生成されていること
     --   Failure/NoPlanならプランはnilであること
-    public requestPlan : Vision`Position * set of Vision`Position * seq of Charger ==> PlanStatus
+    public requestPlan : RoverTypes`Position * set of RoverTypes`Position * seq of Charger ==> PlanStatus
     requestPlan(currentPos, obstacles, chargers) ==
     (
         if gra = nil

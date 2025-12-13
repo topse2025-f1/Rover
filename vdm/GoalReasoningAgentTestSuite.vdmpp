@@ -14,8 +14,8 @@ operations
     (
         dcl gra : GoalReasoningAgent := new GoalReasoningAgent();
         dcl goals : seq of Goal := [
-            mk_Goal(mk_token("G1"), mk_Vision`Position(10, 10), 1),
-            mk_Goal(mk_token("G2"), mk_Vision`Position(20, 20), 2)
+            mk_Goal(mk_token("G1"), mk_RoverTypes`Position(10, 10), 1),
+            mk_Goal(mk_token("G2"), mk_RoverTypes`Position(20, 20), 2)
         ];
         dcl chargers : seq of Charger := [];
         dcl selected : [Goal];

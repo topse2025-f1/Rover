@@ -2,10 +2,10 @@ class MapValidator is subclass of RoverTypes
 
 instance variables
     -- Visionから取得した現在位置
-    private visionPosition : [Vision`Position] := nil;
+    private visionPosition : [RoverTypes`Position] := nil;
     
     -- Visionから取得した障害物セット
-    private visionObstacles : set of Vision`Position := {};
+    private visionObstacles : set of RoverTypes`Position := {};
     
     -- 地上局から受信したゴールリスト
     private groundGoals : seq of Goal := [];
@@ -39,7 +39,7 @@ inv
 
 operations
     -- Vision情報を更新する
-    public updateVision: Vision`Position * set of Vision`Position ==> ()
+    public updateVision: RoverTypes`Position * set of RoverTypes`Position ==> ()
     updateVision(pos, obs) ==
     (
         visionPosition := pos;
@@ -65,7 +65,7 @@ operations
         dcl collisionWithRover : bool :=
             if visionPosition = nil
             then false
-            else let pos : Vision`Position = visionPosition in
+            else let pos : RoverTypes`Position = visionPosition in
                 exists obs in set visionObstacles & Vision`dist(pos, obs) < safeDistance;
         dcl goalConflicts : set of GoalID := {
             g.id | g in set elems groundGoals &
@@ -120,7 +120,7 @@ operations
     getValidatedObstacles() == return visionObstacles
     pre status = <Valid>;
 
-    public getCurrentPosition: () ==> Vision`Position
+    public getCurrentPosition: () ==> RoverTypes`Position
     getCurrentPosition() == return visionPosition
     pre visionPosition <> nil;
 

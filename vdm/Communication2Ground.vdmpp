@@ -46,7 +46,7 @@ instance variables
     private cachedChargers : seq of Charger := [];
     
     -- キャッシュされた障害物情報
-    private cachedObstacles : set of Vision`Position := {};
+    private cachedObstacles : set of RoverTypes`Position := {};
     
     -- コントローラへの参照
     private controller : [RoverController] := nil;
@@ -153,7 +153,7 @@ operations
 
     -- 地上局からの応答を受信する
     -- 事前条件: 接続済みで、応答待ち状態で、期限内であること
-    public responseReceived: seq of Goal * seq of Charger * set of Vision`Position * nat ==> ()
+    public responseReceived: seq of Goal * seq of Charger * set of RoverTypes`Position * nat ==> ()
     responseReceived(goals, chargers, obstacles, ticks) ==
     (
         cachedGoals := goals;
@@ -217,7 +217,7 @@ operations
     getCachedChargers() == return cachedChargers;
 
     -- キャッシュされた障害物情報を取得する
-    public getCachedObstacles: () ==> set of Vision`Position
+    public getCachedObstacles: () ==> set of RoverTypes`Position
     getCachedObstacles() == return cachedObstacles;
 
 end Communication2Ground
