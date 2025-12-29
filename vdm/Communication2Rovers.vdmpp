@@ -4,7 +4,7 @@ types
     -- ローバー間通信のブロードキャストメッセージ
     public RoverBroadcast ::
         helperId : token
-        position : Position
+        position : RoverTypes`Position
         fault : Fault
         message : seq of char;
 
@@ -46,7 +46,7 @@ operations
     -- ステータスをブロードキャストする
     -- 事前条件: ヘルパーIDが登録済みで、プロトコルがCAMで、ペイロードが空でないこと
     -- 事後条件: 送信待ちキューに追加され、支援待ち状態になること
-    public broadcastStatus: token * Position * Fault * seq of char * token ==> ()
+    public broadcastStatus: token * RoverTypes`Position * Fault * seq of char * token ==> ()
     broadcastStatus(helperId, pos, fault, payload, protocol) ==
     (
         dcl msg : RoverBroadcast := mk_RoverBroadcast(helperId, pos, fault, payload);

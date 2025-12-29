@@ -305,7 +305,7 @@ operations
         dcl level : nat :=
             if battery = nil
             then 0
-            else battery.getReportedBattery();
+            else battery.getBatteryLevel();
         dcl recharge : bool :=
             if battery = nil
             then false

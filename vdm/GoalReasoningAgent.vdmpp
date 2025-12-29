@@ -32,7 +32,7 @@ instance variables
     private lastSystemState : [SystemState] := nil;
     
     -- 最後に記録されたローバーの位置
-    private lastPosition : [Vision`Position] := nil;
+    private lastPosition : [RoverTypes`Position] := nil;
     
     -- 最後に使用されたプランナーの種類
     private lastPlannerKind : [PlannerKind] := nil;
@@ -81,7 +81,7 @@ operations
     post goals = newGoals and (goals = [] => missionComplete);
 
     -- 現在位置を更新する（プランニング用）
-    public setCurrentPosition: Vision`Position ==> ()
+    public setCurrentPosition: RoverTypes`Position ==> ()
     setCurrentPosition(pos) == lastPosition := pos
     post lastPosition = pos;
 
@@ -146,7 +146,7 @@ operations
                 return currentGoal
             )
             else (
-                dcl pos : Vision`Position := lastPosition;
+                dcl pos : RoverTypes`Position := lastPosition;
                 dcl chargerSet : set of Charger := { c | c in set elems chargers };
                 dcl nearest : [Charger] := nearestCharger(pos, chargerSet);
                 if nearest = nil
@@ -238,7 +238,7 @@ operations
     getLastFailure() == return lastFailure;
 
     -- 最後に記録された位置を返す
-    public getLastKnownPosition: () ==> [Vision`Position]
+    public getLastKnownPosition: () ==> [RoverTypes`Position]
     getLastKnownPosition() == return lastPosition;
 
 end GoalReasoningAgent

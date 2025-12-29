@@ -18,6 +18,9 @@ instance variables
     
     -- 充電中かどうかのフラグ
     private charging : bool := false;
+
+    -- 充電完了フラグ
+    private chargeFin : bool := false;
     
     -- ソーラーパネル展開状態
     private panelsDeployed : bool := false;
@@ -37,54 +40,96 @@ instance variables
     -- コントローラへの参照
     private controller : [RoverController] := nil;
 
-inv
-    -- 不変条件: バッテリー残量は最大容量を超えない
-    batteryLevel <= maxBattery and
+    -- パネル展開中フラグ
+    private deploying : bool := false;
+
+    -- 不変条件: [BM1]バッテリー残量は最大容量を超えない
+inv batteryLevel <= maxBattery;
     -- 不変条件: パネル展開時は充電器上にいる必要がある
-    (panelsDeployed => atCharger) and
+inv panelsDeployed => atCharger;
     -- 不変条件: 充電中は充電器上にいる必要がある
-    (charging => atCharger) and
-    -- 不変条件: バッテリー残量が移動に必要な量以上か、または充電要求が出ていること
-    (batteryLevel >= destinationSteps + chargerSteps or rechargeFlag)
+inv charging => atCharger;
 
 operations
     -- コントローラを設定する
     public setController: RoverController ==> ()
-    setController(coord) == controller := coord;
+    setController(coord) == controller := coord
+    pre true
+    post true;
 
-    -- 充電要求フラグを更新する内部操作
-    private UpdateRechargeFlag: () ==> ()
-    UpdateRechargeFlag() ==
-        rechargeFlag := batteryLevel < destinationSteps + chargerSteps;
+    -- BatteryMonitor
 
     -- バッテリー容量を設定する（初期化用）
     public setBatteryCapacity: nat1 ==> ()
-    setBatteryCapacity(capacity) ==
+    setBatteryCapacity(capacity) == 
     (
         maxBattery := capacity;
-        if batteryLevel > maxBattery
-        then batteryLevel := maxBattery
-        else skip;
-        UpdateRechargeFlag()
-    );
-
-    -- バッテリー残量を強制的に更新する（テスト用）
-    public updateBatteryLevel: nat ==> ()
-    updateBatteryLevel(level) ==
-    (
-        batteryLevel := if level > maxBattery then maxBattery else level;
-        UpdateRechargeFlag()
+        batteryLevel := maxBattery;
     )
-    pre level >= 0;
+    pre capacity <= defaultMaxBattery
+    post maxBattery = capacity and batteryLevel <= maxBattery;
 
-    -- プラン情報を更新し、充電必要性を再評価する
-    public updatePlans: [Plan] * [Plan] ==> ()
-    updatePlans(plan2Goal, plan2Charger) ==
+    -- バッテリー残量を取得する（充電用）
+    -- 充電時に充電判断するにはmaxBatteryと比較する必要があるため、batteryLevelを返す。
+    public getBatteryLevel2Charge: () ==> nat
+    getBatteryLevel2Charge() == return batteryLevel
+    pre charging
+    post true;
+
+    -- [BM2]判定用バッテリー残量を取得する（制御用）
+    -- BM2要件に準拠して、測定値より5%低く出力する。バッテリ劣化時での信頼性確保が目的。
+    public getBatteryLevel: () ==> nat
+    getBatteryLevel() == return (batteryLevel * 95) div 100
+    pre true
+    post true;
+
+    -- HardwareInterface
+
+    -- [HI1][HI2]rechrgeを判定する
+    -- 引数 plan2Goal: 目標位置へのプラン
+    -- 引数 plan2Charger: 充電器へのプラン
+    -- 事前条件: 両プランは空でないこと
+    -- 事後条件: 充電要求フラグが更新されること
+    -- 事後条件: 充電要求フラグが立っている場合、バッテリー残量が目的地と充電器までのステップ数の合計より少ないこと
+    -- 事後条件: 充電要求フラグが立っていない場合、充電完了フラグが立っておらず、パネルが展開されていないこと
+    -- 事後条件: 充電要求フラグが立っていない場合、バッテリー残量が最大容量に等しいこと
+    -- Note: ComputePlan2ChargingとComputePlan2Destinationから与えられるプラン情報をもとに判定する
+    -- Note: Roverの各制御を担うRoverControllerから呼び出される(BatteryHardware以外は未検討)
+    -- Note: rechargeFlagが立っている場合、Roverは充電器へ向かう必要がある。そのため、OFFにならないと充電位置から動けない。
+    public isRecharge: Plan * Plan ==> bool
+    isRecharge(plan2Goal, plan2Charger) ==
     (
-        destinationSteps := optionalPlanLength(plan2Goal);
-        chargerSteps := optionalPlanLength(plan2Charger);
-        UpdateRechargeFlag()
-    );
+        rechargeFlag := UpdateRechargeFlag(plan2Goal, plan2Charger);
+        return rechargeFlag
+    )
+    pre plan2Goal.steps <> [] and plan2Charger.steps <> []
+    post (rechargeFlag~ and not rechargeFlag => batteryLevel = maxBattery and not chargeFin and not panelsDeployed)
+         and (rechargeFlag => (batteryLevel * 95) div 100 < optionalPlanLength(plan2Goal) + optionalPlanLength(plan2Charger));
+
+    -- [HI3]目標位置の到達を判定する
+    -- 引数 curPos: 現在位置
+    -- 引数 curGoal: 現在のゴール
+    public isAtGoal: Position * Position ==> bool
+    isAtGoal(curPos, curGoalPos) ==
+    (
+        if sameLocation(curPos, curGoalPos)
+        then (
+            destinationSteps := 0;
+            atGoalFlag := true
+        )
+        else
+            atGoalFlag := false;
+        return atGoalFlag
+    )
+    pre true
+    post atGoalFlag and destinationSteps = 0 or not atGoalFlag;
+
+    -- [HI6]太陽電池パネルの展開・収納操作完了を判定する
+    -- 外部からの完了通知を受け取るインターフェース
+    public isPanelsDeployed: () ==> bool
+    isPanelsDeployed() == return true
+    pre true
+    post true;
 
     -- 移動コマンドをキューに追加する
     -- 事前条件: 充電中でないこと
@@ -93,13 +138,181 @@ operations
     (
         pendingCommands := pendingCommands ^ [cmd]
     )
-    pre not charging;
+    pre not charging
+    post true;
+
+    -- SolarPanelController
+
+    -- [HI2]充電器の到達を判定する
+    -- 引数 curPos: 現在位置
+    -- 引数 curChargerPos: 充電器位置
+    -- 事前条件: 充電要求フラグが立っていること
+    -- 事後条件: 充電器上にいる場合、chargerStepsが0になり、atChargerフラグが立つこと
+    public isAtCharger: Position * Position ==> bool
+    isAtCharger(curPos, curChargerPos) ==
+    (
+        if sameLocation(curPos, curChargerPos)
+        then (
+            chargerSteps := 0;
+            atCharger := true;
+        )
+        else
+            atCharger := false;
+
+        return atCharger;
+    )
+    pre rechargeFlag
+    post atCharger and chargerSteps = 0 or not atCharger;
+
+    -- [HI6]太陽電池パネルを展開できるか判定する
+    -- 事前条件: 充電器上にいて、充電器までの残りステップが0で、バッテリー残量が最大容量未満であり、パネルが展開されていないこと
+    -- 事後条件: 充電器上にいる場合、パネル展開中フラグが立つこと
+    public panelsCanBeDeployed: () ==> bool
+    panelsCanBeDeployed() ==
+    (
+        if atCharger
+        then deploying := true
+        else deploying := false;
+        return deploying;
+    )
+    pre atCharger and chargerSteps = 0 and batteryLevel < maxBattery and not panelsDeployed
+    post atCharger => deploying;
+
+    -- [HI6]太陽電池パネルの展開完了を判定する
+    -- 事前条件: 充電器上にいて、パネル展開中フラグが立っており、パネルが展開されていないこと
+    -- 事後条件: パネルが展開され、充電中状態になること
+    public deployPanels: () ==> bool
+    deployPanels() ==
+    (
+        if isPanelsDeployed()
+        then (
+            panelsDeployed := true;
+            deploying := false;
+            charging := true;
+        )
+        else skip;
+        return panelsDeployed
+    )
+    pre atCharger and deploying and panelsDeployed = false
+    post deploying = true or panelsDeployed = true and charging = true and deploying = false;
+
+    -- [HI2]充電完了を判定する
+    -- 事前条件: 充電器上にいて、充電中であり、パネルが展開されていること
+    -- 事後条件: バッテリー残量が最大容量に達した場合、充電完了フラグが立ち、充電中状態が解除されること
+    public isChargeFin: () ==> bool
+    isChargeFin() ==
+    (
+        if getBatteryLevel2Charge() = maxBattery
+        then (
+            charging := false;
+            deploying := true;
+            chargeFin := true
+        )
+        else chargeFin := false;
+        return chargeFin
+    )
+    pre atCharger and charging and panelsDeployed
+    post batteryLevel = maxBattery and chargeFin and deploying or charging;
+
+    -- [HI7]太陽電池パネルを収納する
+    -- 事前条件: 充電器上にいて、充電中でなく、充電完了フラグが立っており、パネルが展開されていること
+    -- 事後条件: パネルが収納され、パネル展開中フラグが解除されること
+    public retractPanels: () ==> bool
+    retractPanels() ==
+    (
+        dcl panelMotionComplete : bool := isPanelsDeployed();
+        if panelMotionComplete
+        then (
+            panelsDeployed := false;
+            deploying := false;
+            chargeFin := false;
+        )
+        else skip;
+        return panelMotionComplete
+    )
+    pre atCharger and not charging and chargeFin and panelsDeployed and deploying
+    post RESULT => not panelsDeployed and not deploying and not chargeFin;
+
+
+    -- 充電要求フラグの状態を取得する
+    public getRechargeFlag: () ==> bool
+    getRechargeFlag() == return rechargeFlag
+    pre true
+    post true;
+
+    -- 充電中かどうかを取得する
+    public isCharging: () ==> bool
+    isCharging() == return charging
+    pre true
+    post true;
+
+    -- パネルが展開されているかどうかを取得する
+    public panelsAreDeployed: () ==> bool
+    panelsAreDeployed() == return panelsDeployed
+    pre true
+    post true;
+
+    -- 以下、仕様アニメーション用の操作
+
+    -- バッテリー残量を強制的に更新する（テスト用）
+    public updateBatteryLevel: nat ==> ()
+    updateBatteryLevel(level) ==
+    (
+        batteryLevel := if level > maxBattery then maxBattery else level;
+    )
+    pre level >= 0;
+
+    -- 充電プロセスを1ステップ進める（テスト用）
+    -- パネル展開 -> 充電 -> パネル収納 の順に遷移する
+    -- TODO: テスト用としてるが、充電完了の判断は要件を実現する仕様であるため、切り分けの検討が必要
+    public chargeTick: nat1 ==> ()
+    chargeTick(amount) ==
+    (
+        if charging
+        then (
+            dcl proposed : nat := getBatteryLevel2Charge() + amount;
+            if proposed >= maxBattery
+            then (
+                updateBatteryLevel(maxBattery);
+            )
+            else (
+                updateBatteryLevel(proposed)
+            )
+        )
+        else skip
+    )
+    pre charging and amount > 0
+    post true;
+
+    -- 充電要求フラグを更新する内部操作(隠蔽関数)
+    -- Cation: 簡単のために1batterylevel / 1waypointで移動を簡略化しているため、destinationSteps + chargerStepsと比較して判定する
+    -- Cation: 現状Roverの現在位置から目的地、充電地までのステップの加算としているが、目的地→充電池の道のりで考える必要あり。
+    -- Cation: 実際は距離、地形、Rover状態、環境、バッテリ状態などを基にバッテリーレベルと道のりを考慮する必要がある。
+    private UpdateRechargeFlag: Plan * Plan ==> bool
+    UpdateRechargeFlag(plan2Goal, plan2Charger) ==
+    (
+        destinationSteps := optionalPlanLength(plan2Goal);
+        chargerSteps := optionalPlanLength(plan2Charger);
+        return getBatteryLevel() < destinationSteps + chargerSteps;
+    )
+    pre plan2Goal.steps <> [] and plan2Charger.steps <> []
+    post true;
 
     -- 次の移動コマンドを実行し、バッテリーを消費する
     -- 事前条件: 実行待ちコマンドがあり、充電中でないこと
     -- 事後条件: コマンドが消費され、バッテリーが減少すること
     public executeNextCommand: () ==> ()
-    executeNextCommand() ==
+    executeNextCommand() == updateBatteryStatus()
+    pre pendingCommands <> [] and not charging
+    post 
+        len pendingCommands = len pendingCommands~ - 1 and
+        len executedCommands = len executedCommands~ + 1 and
+        (batteryLevel~ > 0 => batteryLevel = batteryLevel~ - 1);
+
+    -- コマンド実行によるバッテリ消費模擬（隠蔽関数）
+    -- TODO: コマンドによるバッテリ消費は設計だが、充電判定やゴール判定部分は仕様にかかわるため、切り分けを検討
+    private updateBatteryStatus: () ==> ()
+    updateBatteryStatus() ==
     (
         dcl cmd : MovementCommand := hd pendingCommands;
         pendingCommands := tl pendingCommands;
@@ -112,108 +325,13 @@ operations
         elseif chargerSteps > 0
         then chargerSteps := chargerSteps - 1
         else skip;
-        atGoalFlag := false;
-        UpdateRechargeFlag();
         if controller <> nil and batteryLevel = 0 and not charging
         then controller.reportBatteryCritical()
         else skip
-    )
-    pre pendingCommands <> [] and not charging
-    post 
-        len pendingCommands = len pendingCommands~ - 1 and
-        len executedCommands = len executedCommands~ + 1 and
-        (batteryLevel~ > 0 => batteryLevel = batteryLevel~ - 1);
-
-    -- ゴール到達をマークする
-    public markGoalReached: () ==> ()
-    markGoalReached() ==
-    (
-        atGoalFlag := true;
-        destinationSteps := 0;
-        UpdateRechargeFlag()
     );
 
-    -- ゴール到達状態をクリアする
-    public clearGoalStatus: () ==> ()
-    clearGoalStatus() ==
-    (
-        atGoalFlag := false
-    );
-
-    -- 充電器に到達したことを通知する
-    public reachCharger: () ==> ()
-    reachCharger() ==
-    (
-        atCharger := true;
-        chargerSteps := 0;
-        charging := true;
-        panelsDeployed := true;
-        UpdateRechargeFlag()
-    );
-
-    -- 充電プロセスを1ステップ進める
-    -- パネル展開 -> 充電 -> パネル収納 の順に遷移する
-    public chargeTick: nat1 ==> ()
-    chargeTick(amount) ==
-    (
-        if charging
-        then (
-            dcl proposed : nat := batteryLevel + amount;
-            if proposed >= maxBattery
-            then (
-                batteryLevel := maxBattery;
-                charging := false;
-                panelsDeployed := false;
-                rechargeFlag := false
-            )
-            else (
-                batteryLevel := proposed
-            )
-        )
-        else skip
-    )
-    pre charging and amount > 0;
-
-    -- 充電器から離れる
-    public departCharger: () ==> ()
-    departCharger() ==
-    (
-        if charging
-        then skip
-        else (
-            atCharger := false;
-            panelsDeployed := false
-        )
-    )
-    pre atCharger;
-
-    -- 充電要求フラグの状態を取得する
-    public getRechargeFlag: () ==> bool
-    getRechargeFlag() == return rechargeFlag;
-
-    -- 充電中かどうかを取得する
-    public isCharging: () ==> bool
-    isCharging() == return charging;
-
-    -- パネルが展開されているかを取得する
-    public panelsAreDeployed: () ==> bool
-    panelsAreDeployed() == return panelsDeployed;
-
-    -- バッテリー残量を取得する
-    public getBatteryLevel: () ==> nat
-    getBatteryLevel() == return batteryLevel;
-
-    -- 報告用のバッテリー残量を取得する（誤差を含む）
-    public getReportedBattery: () ==> nat
-    getReportedBattery() ==
-        return (batteryLevel * 95) div 100;
-
-    -- 実行待ちコマンドを取得する
-    public getPendingCommands: () ==> seq of MovementCommand
-    getPendingCommands() == return pendingCommands;
-
-    -- 実行済みコマンドを取得する
-    public getExecutedCommands: () ==> seq of MovementCommand
-    getExecutedCommands() == return executedCommands;
+    -- バッテリレベル取得（テスト用）
+    public getBatteryLevelForTest: () ==> nat
+    getBatteryLevelForTest() == return batteryLevel
 
 end BatteryHardware

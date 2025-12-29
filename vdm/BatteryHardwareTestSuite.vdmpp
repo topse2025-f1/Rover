@@ -10,11 +10,13 @@ operations
         -- テストケース1: 初期化と基本動作
         results := results ^ TestInitialization();
         
-        -- テストケース2: 移動による消費
-        results := results ^ TestConsumption();
+        -- テストケース2: 目標位置への到達
+        results := results ^ TestGoalReach();
         
         -- テストケース3: 充電動作
         results := results ^ TestCharging();
+
+        -- TODO: 移動による消費テスト (HI4, HI5) は仕様定義後に実装予定
         
         return results
     );
@@ -26,25 +28,27 @@ operations
         dcl battery : BatteryHardware := new BatteryHardware();
         battery.setBatteryCapacity(100);
         
-        if battery.getBatteryLevel() = 100 and not battery.getRechargeFlag()
+        if battery.getBatteryLevelForTest() = 100 and not battery.getRechargeFlag()
         then return "TestInitialization: OK\n"
         else return "TestInitialization: FAILED\n"
     );
 
-    -- 消費テスト
-    private TestConsumption: () ==> seq of char
-    TestConsumption() ==
+    -- 目標位置への到達テスト
+    private TestGoalReach: () ==> seq of char
+    TestGoalReach() ==
     (
         dcl battery : BatteryHardware := new BatteryHardware();
-        dcl cmd : MovementCommand := <Forward>;
+        dcl goalPos : Position := mk_Position(5.0, 5.0);
+        dcl result : bool := false;
         
         battery.setBatteryCapacity(100);
-        battery.sendMovementCommand(cmd);
-        battery.executeNextCommand();
         
-        if battery.getBatteryLevel() < 100
-        then return "TestConsumption: OK\n"
-        else return "TestConsumption: FAILED (Level not decreased)\n"
+        -- ゴールに到達させる
+        result := battery.isAtGoal(goalPos, goalPos);
+        
+        if result
+        then return "TestGoalReach: OK\n"
+        else return "TestGoalReach: FAILED\n"
     );
 
     -- 充電テスト
@@ -52,15 +56,49 @@ operations
     TestCharging() ==
     (
         dcl battery : BatteryHardware := new BatteryHardware();
+        dcl chargerPos : Position := mk_Position(10.0, 10.0);
+        dcl result : bool := false;
+        dcl plan2Goal : Plan := mk_Plan([mk_Position(5.0, 5.0)]);
+        dcl plan2Charger : Plan := mk_Plan([mk_Position(10.0, 10.0)]);
+        
         battery.setBatteryCapacity(100);
-        battery.updateBatteryLevel(50); -- 減らす
+        battery.updateBatteryLevel(1); -- 減らす (充電が必要なレベルまで)
         
-        battery.reachCharger();
-        battery.chargeTick(10);
+        -- 1. 充電要求フラグをONにする
+        result := battery.isRecharge(plan2Goal, plan2Charger);
         
-        if battery.getBatteryLevel() > 50 and battery.isCharging()
+        if not result then return "TestCharging: FAILED (Recharge flag not set)\n";
+
+        -- 2. 充電器に到達させる
+        result := battery.isAtCharger(chargerPos, chargerPos);
+        
+        -- 3. パネル展開可能か確認し、展開開始
+        if battery.panelsCanBeDeployed() and result
+        then (
+            -- 展開完了通知（シミュレーション）
+            result := battery.deployPanels();
+        )
+        else return "TestCharging: FAILED (Cannot deploy panels)\n";
+
+        -- 4. 充電プロセス進行（満タンになるまでループ）
+        while battery.isCharging() do (
+            battery.chargeTick(10);
+            result := battery.isChargeFin();
+        );
+        
+        if battery.getBatteryLevelForTest() <> 100 then return "TestCharging: FAILED (Battery not full)\n";
+
+        -- 5. パネルを閉じる
+        result := battery.retractPanels();
+        if not result then return "TestCharging: FAILED (Panels not retracted)\n";
+
+        -- 6. 充電要求フラグをOFFにする（再評価）
+        -- バッテリー満タンなのでOFFになるはず
+        result := battery.isRecharge(plan2Goal, plan2Charger);
+
+        if not result and not battery.isCharging() and not battery.panelsAreDeployed()
         then return "TestCharging: OK\n"
-        else return "TestCharging: FAILED\n"
+        else return "TestCharging: FAILED (Final state incorrect)\n"
     );
 
 end BatteryHardwareTestSuite

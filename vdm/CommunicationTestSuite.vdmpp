@@ -38,7 +38,7 @@ operations
     (
         dcl comm : Communication2Rovers := new Communication2Rovers();
         dcl helperId : token := mk_token("Rover2");
-        dcl pos : Position := mk_Vision`Position(10, 10);
+        dcl pos : Position := mk_RoverTypes`Position(10, 10);
         dcl fault : Fault := <LocalizationFault>;
         dcl protocol : token := mk_token("CAM");
         
