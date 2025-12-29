@@ -73,17 +73,44 @@
 *   **説明**: バッテリー残量を強制的に更新します（テスト用）。
 *   **関連要件**: テスト容易性。
 
-### `updatePlans(plan2Goal, plan2Charger)`
-*   **事前条件**: なし
+### `chargeTick(amount)`
+*   **事前条件**: `charging and amount > 0`
 *   **事後条件**: なし
-*   **説明**: 現在のプランに基づいて、ゴールおよび充電器までの必要ステップ数を更新し、充電が必要か再評価します。
-*   **関連要件**: エネルギー管理。
+*   **説明**: 充電プロセスを1ステップ進めます（テスト用）。
+*   **関連要件**: テスト容易性。
+
+### `isRecharge(plan2Goal, plan2Charger)`
+*   **事前条件**: `plan2Goal.steps <> [] and plan2Charger.steps <> []` (両プランは空でないこと)
+*   **事後条件**: 
+    *   `(rechargeFlag~ and not rechargeFlag => batteryLevel = maxBattery and not chargeFin and not panelsDeployed)`
+        *   充電要求フラグがONからOFFに変化するとき、バッテリーが満タンで、充電完了フラグとパネル展開フラグはOFFであること。
+    *   `(rechargeFlag => (batteryLevel * 95) div 100 < optionalPlanLength(plan2Goal) + optionalPlanLength(plan2Charger))`
+        *   充電要求フラグが立っている場合、バッテリー残量が目的地と充電器までのステップ数の合計より少ないこと。
+*   **説明**: 
+    *   ComputePlan2ChargingとComputePlan2Destinationから与えられるプラン情報をもとに、充電が必要かどうかを判定し、`rechargeFlag` を更新します。
+    *   Roverの各制御を担うRoverControllerから呼び出されます。
+    *   `rechargeFlag` が立っている場合、Roverは充電器へ向かう必要があります。
+*   **関連要件**: [HI1], [HI2]
+
+### `isAtGoal(curPos, curGoalPos)`
+*   **事前条件**: `true`
+*   **事後条件**: `atGoalFlag and destinationSteps = 0 or not atGoalFlag`
+*   **説明**: 
+    *   現在位置がゴール位置と一致するか判定します。一致する場合、`atGoalFlag` をtrueにし、`destinationSteps` を0にします。
+*   **関連要件**: [HI3]
+
+### `isPanelsDeployed()`
+*   **事前条件**: `true`
+*   **事後条件**: `true`
+*   **説明**: 
+    *   外部からのパネル展開完了通知を受け取るインターフェースです。現在は常に `true` を返します。
+*   **関連要件**: [HI6]
 
 ### `sendMovementCommand(cmd)`
 *   **事前条件**: `not charging` (充電中でないこと)
-*   **事後条件**: なし
+*   **事後条件**: `true`
 *   **説明**: 移動コマンドをキューに追加します。
-*   **関連要件**: 移動制御。
+*   **関連要件**: 移動制御
 
 ### `executeNextCommand()`
 *   **事前条件**: `pendingCommands <> [] and not charging` (実行待ちコマンドがあり、充電中でないこと)
@@ -92,37 +119,50 @@
     *   `len executedCommands = len executedCommands~ + 1`
     *   `(batteryLevel~ > 0 => batteryLevel = batteryLevel~ - 1)`
 *   **説明**: 次の移動コマンドを実行し、バッテリーを消費します。残量が0になると `RoverController.reportBatteryCritical()` を呼び出します。
-*   **関連要件**: 移動実行、バッテリー消費、枯渇警告。
+*   **関連要件**: 移動実行、バッテリー消費
 
-### `markGoalReached()`
-*   **事前条件**: なし
-*   **事後条件**: なし
-*   **説明**: ゴール到達をマークします。
-*   **関連要件**: 状態更新。
+### `isAtCharger(curPos, curChargerPos)`
+*   **事前条件**: `rechargeFlag` (充電要求フラグが立っていること)
+*   **事後条件**: `atCharger and chargerSteps = 0 or not atCharger`
+*   **説明**: 
+    *   現在位置が充電器位置と一致するか判定します。一致する場合、`atCharger` フラグを立て、`chargerSteps` を0にします。
+*   **関連要件**: [HI2]
 
-### `clearGoalStatus()`
-*   **事前条件**: なし
-*   **事後条件**: なし
-*   **説明**: ゴール到達状態をクリアします。
-*   **関連要件**: 状態リセット。
+### `panelsCanBeDeployed()`
+*   **事前条件**: `atCharger and chargerSteps = 0 and batteryLevel < maxBattery and not panelsDeployed`
+    *   充電器上にいて、充電器までの残りステップが0で、バッテリー残量が最大容量未満であり、パネルが展開されていないこと。
+*   **事後条件**: `atCharger => deploying`
+    *   充電器上にいる場合、パネル展開中フラグが立つこと。
+*   **説明**: 
+    *   太陽電池パネルを展開できるか判定し、展開プロセスを開始（`deploying := true`）します。
+*   **関連要件**: [HI6]
 
-### `reachCharger()`
-*   **事前条件**: なし
-*   **事後条件**: なし
-*   **説明**: 充電器に到達したことを通知し、パネルを展開して充電モードへ移行します。
-*   **関連要件**: 充電プロセス開始。
+### `deployPanels()`
+*   **事前条件**: `atCharger and deploying and panelsDeployed = false`
+    *   充電器上にいて、パネル展開中フラグが立っており、パネルが展開されていないこと。
+*   **事後条件**: `deploying = true or panelsDeployed = true and charging = true and deploying = false`
+    *   展開中であるか、または展開完了して充電中状態になること。
+*   **説明**: 
+    *   太陽電池パネルの展開完了を判定します。`isPanelsDeployed` からの完了通知を受け取ると、パネル展開フラグを立て、充電を開始します。
+*   **関連要件**: [HI6]
 
-### `chargeTick(amount)`
-*   **事前条件**: `charging and amount > 0`
-*   **事後条件**: なし
-*   **説明**: 充電プロセスを1ステップ進めます。バッテリーを回復し、満タンになると充電を終了します。
-*   **関連要件**: 充電実行。
+### `isChargeFin()`
+*   **事前条件**: `atCharger and charging and panelsDeployed`
+    *   充電器上にいて、充電中であり、パネルが展開されていること。
+*   **事後条件**: `batteryLevel = maxBattery and chargeFin and deploying or charging`
+    *   バッテリー残量が最大容量に達した場合、充電完了フラグが立ち、充電中状態が解除されること。
+*   **説明**: 
+    *   充電完了を判定します。満充電になると充電を停止し、パネル収納プロセス（`deploying := true`）へ移行します。
+*   **関連要件**: [HI2]
 
-### `departCharger()`
-*   **事前条件**: `atCharger`
-*   **事後条件**: なし
-*   **説明**: 充電器から離脱し、パネルを収納します。
-*   **関連要件**: 充電プロセス終了。
+### `retractPanels()`
+*   **事前条件**: `atCharger and not charging and chargeFin and panelsDeployed and deploying`
+    *   充電器上にいて、充電中でなく、充電完了フラグが立っており、パネルが展開されていること。
+*   **事後条件**: `RESULT => not panelsDeployed and not deploying and not chargeFin`
+    *   パネルが収納され、パネル展開中フラグが解除されること。
+*   **説明**: 
+    *   太陽電池パネルを収納します。収納が完了すると、関連するフラグをリセットします。
+*   **関連要件**: [HI7]
 
 ### `getRechargeFlag()`
 *   **事前条件**: なし
@@ -145,26 +185,18 @@
 ### `getBatteryLevel()`
 *   **事前条件**: なし
 *   **事後条件**: なし
-*   **説明**: バッテリー残量を取得します。
-*   **関連要件**: 状態確認。
+*   **説明**: 
+    *   [BM2]判定用バッテリー残量を取得します（制御用）。
+    *   BM2要件に準拠して、測定値より5%低く出力します。バッテリ劣化時での信頼性確保が目的です。
+*   **関連要件**: 状態確認、[BM2]
 
-### `getReportedBattery()`
-*   **事前条件**: なし
+### `getBatteryLevel2Charge()`
+*   **事前条件**: `charging` (充電中であること)
 *   **事後条件**: なし
-*   **説明**: 報告用のバッテリー残量を取得します（誤差を含む）。
-*   **関連要件**: テレメトリ。
-
-### `getPendingCommands()`
-*   **事前条件**: なし
-*   **事後条件**: なし
-*   **説明**: 実行待ちコマンドを取得します。
-*   **関連要件**: デバッグ、状態確認。
-
-### `getExecutedCommands()`
-*   **事前条件**: なし
-*   **事後条件**: なし
-*   **説明**: 実行済みコマンドを取得します。
-*   **関連要件**: デバッグ、履歴確認。
+*   **説明**: 
+    *   バッテリー残量を取得します（充電用）。
+    *   充電時に充電判断するにはmaxBatteryと比較する必要があるため、生のbatteryLevelを返します。
+*   **関連要件**: 充電制御
 
 ## UMLモデル (PlantUML)
 
@@ -181,7 +213,9 @@ class BatteryHardware {
   - atGoalFlag : bool
   - atCharger : bool
   - charging : bool
+  - chargeFin : bool
   - panelsDeployed : bool
+  - deploying : bool
   - pendingCommands : seq of MovementCommand
   - executedCommands : seq of MovementCommand
   - destinationSteps : nat
@@ -190,19 +224,22 @@ class BatteryHardware {
   + setController(coord)
   + setBatteryCapacity(capacity)
   + updateBatteryLevel(level)
-  + updatePlans(plan2Goal, plan2Charger)
+  + chargeTick(amount)
+  + isRecharge(plan2Goal, plan2Charger) : bool
+  + isAtGoal(curPos, curGoalPos) : bool
+  + isPanelsDeployed() : bool
   + sendMovementCommand(cmd)
   + executeNextCommand()
-  + markGoalReached()
-  + clearGoalStatus()
-  + reachCharger()
-  + chargeTick(amount)
-  + departCharger()
+  + isAtCharger(curPos, curChargerPos) : bool
+  + panelsCanBeDeployed() : bool
+  + deployPanels() : bool
+  + isChargeFin() : bool
+  + retractPanels() : bool
   + getRechargeFlag() : bool
   + isCharging() : bool
   + panelsAreDeployed() : bool
   + getBatteryLevel() : nat
-  + getReportedBattery() : nat
+  + getBatteryLevel2Charge() : nat
 }
 
 RoverTypes <|-- BatteryHardware
@@ -210,7 +247,7 @@ RoverTypes <|-- BatteryHardware
 ```
 
 ### 2. ステートマシン図 (State Machine Diagram)
-バッテリー消費と充電プロセスの状態遷移を示します。
+バッテリー消費と充電プロセスの状態遷移を示します。TestSuiteの `TestCharging` シナリオに対応しています。
 
 ```plantuml
 @startuml
@@ -225,13 +262,15 @@ state Discharging {
 
 state ChargingProcess {
   [*] --> Arrived
-  Arrived --> Charging : reachCharger() / Deploy Panels
+  Arrived --> Deploying : panelsCanBeDeployed()
+  Deploying --> Charging : deployPanels()
   Charging --> Charging : chargeTick()
-  Charging --> Charged : Battery Full
-  Charged --> Departed : departCharger() / Retract Panels
+  Charging --> Charged : Battery Full / isChargeFin()
+  Charged --> Retracting : retractPanels()
+  Retracting --> Departed : Panel Retracted
 }
 
-Discharging --> ChargingProcess : Arrive at Charger
+Discharging --> ChargingProcess : isAtCharger()
 ChargingProcess --> Discharging : Depart
 
 Critical --> [*] : Report Failure
@@ -239,50 +278,37 @@ Critical --> [*] : Report Failure
 ```
 
 ### 3. アクティビティ図 (Activity Diagram)
-`executeNextCommand` におけるコマンド実行とバッテリー消費のロジックを示します。
-
-```plantuml
-@startuml
-start
-:executeNextCommand called;
-
-if (Pending Commands exist?) then (Yes)
-  if (Charging?) then (Yes)
-    :Error: Cannot move while charging;
-  else (No)
-    :Pop command from pending;
-    :Add to executed;
-    if (Battery > 0) then (Yes)
-      :Battery Level--;
-      :Update Recharge Flag;
-      if (Battery == 0) then (Yes)
-        :Report Battery Critical;
-      else (No)
-      endif
-    else (No)
-      :Report Battery Critical;
-    endif
-  endif
-else (No)
-  :No action;
-endif
-
-stop
-@enduml
-```
+本コンポーネントの移動消費ロジック (`executeNextCommand`) に関するテストシナリオ (`TestConsumption`) は現在未実装であるため、アクティビティ図は省略します。
 
 ### 4. シーケンス図 (Sequence Diagram)
-充電プロセスの流れを示します。
+充電プロセスの流れを示します。TestSuiteの `TestCharging` シナリオに対応しています。
+なお、`TestInitialization`（初期化）および `TestGoalReach`（ゴール到達判定）については、単純な状態設定・参照操作であるため、図示を省略します。
 
 ```plantuml
 @startuml
 participant "RoverController" as Ctrl
 participant "BatteryHardware" as Battery
 
-Ctrl -> Battery : reachCharger()
+Ctrl -> Battery : isRecharge(plan2Goal, plan2Charger)
+activate Battery
+  Battery -> Battery : rechargeFlag = true
+deactivate Battery
+
+Ctrl -> Battery : isAtCharger(pos, chargerPos)
+activate Battery
+  Battery -> Battery : atCharger = true
+deactivate Battery
+
+Ctrl -> Battery : panelsCanBeDeployed()
+activate Battery
+  Battery -> Battery : deploying = true
+deactivate Battery
+
+Ctrl -> Battery : deployPanels()
 activate Battery
   Battery -> Battery : panelsDeployed = true
   Battery -> Battery : charging = true
+  Battery -> Battery : deploying = false
 deactivate Battery
 
 loop until full
@@ -290,12 +316,21 @@ loop until full
   activate Battery
     Battery -> Battery : Increase Battery Level
   deactivate Battery
+  Ctrl -> Battery : isChargeFin()
+  activate Battery
+    Battery -> Battery : Check if full
+  deactivate Battery
 end
 
-Ctrl -> Battery : departCharger()
+Ctrl -> Battery : retractPanels()
 activate Battery
-  Battery -> Battery : charging = false
   Battery -> Battery : panelsDeployed = false
+  Battery -> Battery : chargeFin = false
+deactivate Battery
+
+Ctrl -> Battery : isRecharge(plan2Goal, plan2Charger)
+activate Battery
+  Battery -> Battery : rechargeFlag = false
 deactivate Battery
 @enduml
 ```
